@@ -14,6 +14,7 @@ from .routes.phone_numbers import phone_numbers_bp
 from .routes.messages import messages_bp
 from .routes.email import email_bp
 from .twin_plane.routes import twin_plane_bp
+from .explainer import explainer_bp
 
 logger = logging.getLogger(__name__)
 
@@ -52,6 +53,9 @@ def create_app(storage: TwinStorage, config: dict | None = None) -> Flask:
 
     # Register Twin Plane routes
     app.register_blueprint(twin_plane_bp)
+
+    # Register explainer page and agent instructions
+    app.register_blueprint(explainer_bp)
 
     logger.info("Twilio twin created — base_url=%s", base_url)
     return app

@@ -1,0 +1,250 @@
+"""Explainer page and agent instructions for the Twilio twin.
+
+Serves:
+  GET /                         — HTML explainer page for humans and agents
+  GET /_twin/agent-instructions — Plain text agent instructions
+"""
+
+from flask import Blueprint, Response
+
+explainer_bp = Blueprint("explainer", __name__)
+
+AGENT_INSTRUCTIONS = """\
+# Twilio & SendGrid Twin — twilio.twins.la
+
+A high-fidelity digital twin of the Twilio SMS and SendGrid Email APIs.
+Code written against this twin works against the real Twilio/SendGrid
+with only hostname and credential changes.
+
+## Authentication
+
+SMS/Voice API: HTTP Basic Auth
+  Username: Account SID (starts with AC)
+  Password: Auth Token
+
+Email API: Bearer token
+  Header: Authorization: Bearer SG.{key_id}.{key_secret}
+
+Create credentials via the Twin Plane (no auth required):
+  POST /_twin/accounts          — returns { sid, auth_token }
+  POST /_twin/api-keys          — returns { key_id, key_secret } (for email)
+
+## Key Endpoints
+
+Twin Plane (no auth):
+  GET  /_twin/health             — status check
+  GET  /_twin/scenarios          — supported scenarios
+  GET  /_twin/logs               — operation logs
+  POST /_twin/accounts           — create account
+  POST /_twin/api-keys           — create SendGrid API key
+  GET  /_twin/emails             — list emails
+  POST /_twin/simulate/inbound   — simulate inbound SMS
+
+Twilio SMS API (Basic Auth):
+  POST /2010-04-01/Accounts/{AccountSid}/Messages.json         — send SMS
+  GET  /2010-04-01/Accounts/{AccountSid}/Messages.json         — list messages
+  GET  /2010-04-01/Accounts/{AccountSid}/Messages/{Sid}.json   — get message
+  POST /2010-04-01/Accounts/{AccountSid}/IncomingPhoneNumbers.json — provision number
+  GET  /2010-04-01/Accounts/{AccountSid}/IncomingPhoneNumbers.json — list numbers
+
+SendGrid Email API (Bearer Auth):
+  POST /v3/mail/send             — send email (returns 202, X-Message-Id header)
+
+## Quick Start
+
+1. Create an account:
+   curl -X POST https://twilio.twins.la/_twin/accounts \\
+     -H "Content-Type: application/json" \\
+     -d '{"friendly_name": "My App"}'
+
+2. Send an SMS (use sid and auth_token from step 1):
+   curl -X POST https://twilio.twins.la/2010-04-01/Accounts/{sid}/Messages.json \\
+     -u "{sid}:{auth_token}" \\
+     -d "To=+15551234567" -d "From=+15559876543" -d "Body=Hello from twin"
+
+3. Check the message status:
+   curl https://twilio.twins.la/2010-04-01/Accounts/{sid}/Messages/{message_sid}.json \\
+     -u "{sid}:{auth_token}"
+
+## Local Usage
+
+pip install twins-twilio twins-local
+python -c "
+from twins_local.storage_sqlite import SQLiteStorage
+from twins_twilio.app import create_app
+storage = SQLiteStorage('twin.db')
+app = create_app(storage=storage)
+app.run(port=8080)
+"
+
+Then use http://localhost:8080 instead of https://twilio.twins.la.
+
+## Reference
+
+Detailed docs: https://github.com/twins-la/twilio
+Project overview: https://twins.la
+All twins: https://github.com/twins-la
+"""
+
+EXPLAINER_HTML = """\
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>twilio.twins.la — Twilio &amp; SendGrid Twin</title>
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;600&family=JetBrains+Mono:wght@400&display=swap');
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body {
+            min-height: 100vh;
+            background: #0a0a0a;
+            font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+            color: #ccc;
+            padding: 3rem 2rem;
+            line-height: 1.7;
+        }
+        main { max-width: 700px; margin: 0 auto; }
+        h1 {
+            font-size: clamp(2rem, 5vw, 3rem);
+            font-weight: 600;
+            letter-spacing: -0.03em;
+            background: linear-gradient(135deg, #ffffff 0%, #a0a0a0 100%);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            background-clip: text;
+            margin-bottom: 0.5rem;
+        }
+        .tagline {
+            font-size: 1.1rem;
+            color: #666;
+            margin-bottom: 2.5rem;
+            font-weight: 300;
+        }
+        h2 {
+            font-size: 1.25rem;
+            font-weight: 600;
+            color: #fff;
+            margin: 2rem 0 0.75rem;
+            letter-spacing: -0.01em;
+        }
+        p { margin-bottom: 1rem; color: #999; }
+        a { color: #4a9eff; text-decoration: none; }
+        a:hover { text-decoration: underline; }
+        ul { list-style: none; padding: 0; margin-bottom: 1rem; }
+        ul li { padding: 0.3rem 0; color: #999; }
+        ul li::before { content: "→ "; color: #444; }
+        code {
+            font-family: 'JetBrains Mono', monospace;
+            font-size: 0.85em;
+            background: #1a1a1a;
+            padding: 0.15em 0.4em;
+            border-radius: 3px;
+            color: #ddd;
+        }
+        .snippet-box {
+            background: #111;
+            border: 1px solid #222;
+            border-radius: 6px;
+            padding: 1.25rem;
+            margin: 1rem 0;
+            position: relative;
+        }
+        .snippet-box pre {
+            font-family: 'JetBrains Mono', monospace;
+            font-size: 0.8rem;
+            color: #aaa;
+            white-space: pre-wrap;
+            word-break: break-word;
+            line-height: 1.5;
+            max-height: 400px;
+            overflow-y: auto;
+        }
+        .copy-btn {
+            position: absolute;
+            top: 0.75rem;
+            right: 0.75rem;
+            background: #222;
+            color: #888;
+            border: 1px solid #333;
+            padding: 0.3rem 0.7rem;
+            border-radius: 4px;
+            font-size: 0.75rem;
+            cursor: pointer;
+            font-family: 'Inter', sans-serif;
+        }
+        .copy-btn:hover { background: #333; color: #ccc; }
+        .links { margin-top: 2.5rem; padding-top: 1.5rem; border-top: 1px solid #1a1a1a; }
+        .links a { margin-right: 1.5rem; font-size: 0.9rem; }
+        footer { margin-top: 3rem; color: #333; font-size: 0.8rem; }
+    </style>
+</head>
+<body>
+    <main>
+        <h1>twilio.twins.la</h1>
+        <p class="tagline">A digital twin of the Twilio SMS and SendGrid Email APIs.</p>
+
+        <h2>What is this?</h2>
+        <p>
+            This is a high-fidelity digital twin of Twilio's SMS API and SendGrid's Email API.
+            Code you write against this twin will work against the real Twilio and SendGrid
+            with only hostname and credential changes. No Twilio account needed to develop.
+        </p>
+
+        <h2>Supported scenarios</h2>
+        <ul>
+            <li>Send and receive SMS via the Twilio REST API</li>
+            <li>Provision and manage phone numbers</li>
+            <li>Webhook delivery with X-Twilio-Signature validation</li>
+            <li>Message status progression (queued → sending → sent → delivered)</li>
+            <li>TwiML auto-reply parsing</li>
+            <li>Send email via SendGrid v3 Mail Send API</li>
+            <li>API key authentication for email</li>
+        </ul>
+
+        <h2>How to use it</h2>
+        <p>
+            <strong>Cloud:</strong> Point your app at <code>https://twilio.twins.la</code> instead of
+            <code>api.twilio.com</code>. Create an account via
+            <code>POST /_twin/accounts</code> and use the returned credentials.
+        </p>
+        <p>
+            <strong>Local:</strong> Install with <code>pip install twins-twilio twins-local</code>
+            and run a local instance on any port. Same API, same behavior, your machine.
+        </p>
+
+        <h2>For agents</h2>
+        <p>
+            Copy this into your agent's system prompt, tool configuration, or CLAUDE.md.
+            Also available as plain text at
+            <a href="/_twin/agent-instructions"><code>/_twin/agent-instructions</code></a>.
+        </p>
+        <div class="snippet-box">
+            <button class="copy-btn" onclick="navigator.clipboard.writeText(document.getElementById('agent-snippet').textContent).then(()=>{this.textContent='Copied!';setTimeout(()=>this.textContent='Copy',1500)})">Copy</button>
+            <pre id="agent-snippet">""" + AGENT_INSTRUCTIONS.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;") + """</pre>
+        </div>
+
+        <div class="links">
+            <a href="https://github.com/twins-la/twilio">GitHub</a>
+            <a href="https://twins.la">twins.la</a>
+            <a href="/_twin/health">Health</a>
+            <a href="/_twin/scenarios">Scenarios</a>
+        </div>
+
+        <footer>twins.la — Where agents meet their environment.</footer>
+    </main>
+</body>
+</html>
+"""
+
+
+@explainer_bp.route("/", methods=["GET"])
+def explainer_page():
+    """Serve the HTML explainer page."""
+    return EXPLAINER_HTML
+
+
+@explainer_bp.route("/_twin/agent-instructions", methods=["GET"])
+def agent_instructions():
+    """Serve agent instructions as plain text."""
+    return Response(AGENT_INSTRUCTIONS, mimetype="text/plain")
