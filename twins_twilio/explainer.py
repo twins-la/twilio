@@ -94,14 +94,14 @@ EXPLAINER_HTML = """\
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>twilio.twins.la — Twilio &amp; SendGrid Twin</title>
     <style>
-        @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;600&family=JetBrains+Mono:wght@400&display=swap');
+        @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600&family=JetBrains+Mono:wght@400&display=swap');
         * { margin: 0; padding: 0; box-sizing: border-box; }
         body {
             min-height: 100vh;
-            background: #0a0a0a;
+            background: #f8f8f8;
             font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
-            color: #ccc;
-            padding: 3rem 2rem;
+            color: #374151;
+            padding: 4rem 2rem;
             line-height: 1.7;
         }
         main { max-width: 700px; margin: 0 auto; }
@@ -109,7 +109,7 @@ EXPLAINER_HTML = """\
             font-size: clamp(2rem, 5vw, 3rem);
             font-weight: 600;
             letter-spacing: -0.03em;
-            background: linear-gradient(135deg, #ffffff 0%, #a0a0a0 100%);
+            background: linear-gradient(135deg, #111827 0%, #6b7280 100%);
             -webkit-background-clip: text;
             -webkit-text-fill-color: transparent;
             background-clip: text;
@@ -117,43 +117,46 @@ EXPLAINER_HTML = """\
         }
         .tagline {
             font-size: 1.1rem;
-            color: #666;
+            color: #6b7280;
             margin-bottom: 2.5rem;
             font-weight: 300;
         }
         h2 {
             font-size: 1.25rem;
             font-weight: 600;
-            color: #fff;
+            color: #111827;
             margin: 2rem 0 0.75rem;
             letter-spacing: -0.01em;
         }
-        p { margin-bottom: 1rem; color: #999; }
-        a { color: #4a9eff; text-decoration: none; }
+        p { margin-bottom: 1rem; color: #6b7280; }
+        p strong { color: #374151; }
+        a { color: #2563eb; text-decoration: none; }
         a:hover { text-decoration: underline; }
         ul { list-style: none; padding: 0; margin-bottom: 1rem; }
-        ul li { padding: 0.3rem 0; color: #999; }
-        ul li::before { content: "→ "; color: #444; }
+        ul li { padding: 0.3rem 0; color: #6b7280; }
+        ul li::before { content: "→ "; color: #d1d5db; }
         code {
             font-family: 'JetBrains Mono', monospace;
             font-size: 0.85em;
-            background: #1a1a1a;
+            background: #f3f4f6;
             padding: 0.15em 0.4em;
-            border-radius: 3px;
-            color: #ddd;
+            border-radius: 4px;
+            color: #374151;
+            border: 1px solid #e5e7eb;
         }
         .snippet-box {
-            background: #111;
-            border: 1px solid #222;
-            border-radius: 6px;
-            padding: 1.25rem;
+            background: #ffffff;
+            border: 1px solid #e5e7eb;
+            border-radius: 10px;
+            padding: 1.5rem;
             margin: 1rem 0;
             position: relative;
+            box-shadow: 0 1px 3px rgba(0,0,0,0.04);
         }
         .snippet-box pre {
             font-family: 'JetBrains Mono', monospace;
             font-size: 0.8rem;
-            color: #aaa;
+            color: #6b7280;
             white-space: pre-wrap;
             word-break: break-word;
             line-height: 1.5;
@@ -164,19 +167,20 @@ EXPLAINER_HTML = """\
             position: absolute;
             top: 0.75rem;
             right: 0.75rem;
-            background: #222;
-            color: #888;
-            border: 1px solid #333;
+            background: #f3f4f6;
+            color: #6b7280;
+            border: 1px solid #e5e7eb;
             padding: 0.3rem 0.7rem;
-            border-radius: 4px;
+            border-radius: 6px;
             font-size: 0.75rem;
             cursor: pointer;
             font-family: 'Inter', sans-serif;
+            transition: background 0.15s, color 0.15s;
         }
-        .copy-btn:hover { background: #333; color: #ccc; }
-        .links { margin-top: 2.5rem; padding-top: 1.5rem; border-top: 1px solid #1a1a1a; }
+        .copy-btn:hover { background: #e5e7eb; color: #374151; }
+        .links { margin-top: 2.5rem; padding-top: 1.5rem; border-top: 1px solid #e5e7eb; }
         .links a { margin-right: 1.5rem; font-size: 0.9rem; }
-        footer { margin-top: 3rem; color: #333; font-size: 0.8rem; }
+        footer { margin-top: 3rem; color: #6b7280; font-size: 0.8rem; }
     </style>
 </head>
 <body>
