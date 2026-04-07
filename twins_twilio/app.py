@@ -1,4 +1,4 @@
-"""Flask application factory for the Twilio SMS twin.
+"""Flask application factory for the Twilio twin.
 
 The host calls create_app() with a storage backend and configuration,
 and receives a configured Flask application to serve.
@@ -12,6 +12,7 @@ from .storage import TwinStorage
 from .routes.accounts import accounts_bp
 from .routes.phone_numbers import phone_numbers_bp
 from .routes.messages import messages_bp
+from .routes.email import email_bp
 from .twin_plane.routes import twin_plane_bp
 
 logger = logging.getLogger(__name__)
@@ -45,6 +46,9 @@ def create_app(storage: TwinStorage, config: dict | None = None) -> Flask:
     app.register_blueprint(accounts_bp)
     app.register_blueprint(phone_numbers_bp)
     app.register_blueprint(messages_bp)
+
+    # Register SendGrid API routes
+    app.register_blueprint(email_bp)
 
     # Register Twin Plane routes
     app.register_blueprint(twin_plane_bp)

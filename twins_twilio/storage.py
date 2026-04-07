@@ -65,6 +65,38 @@ class TwinStorage(ABC):
     def update_message(self, account_sid: str, sid: str, updates: dict) -> Optional[dict]:
         """Update a message record. Returns updated dict or None."""
 
+    # -- API Keys (SendGrid-style) --
+
+    @abstractmethod
+    def create_api_key(self, key_id: str, key_secret: str, account_sid: str, name: str) -> dict:
+        """Create an API key. Returns the stored key dict."""
+
+    @abstractmethod
+    def get_api_key_by_id(self, key_id: str) -> Optional[dict]:
+        """Fetch an API key by its key_id. Returns None if not found."""
+
+    @abstractmethod
+    def list_api_keys(self, account_sid: str) -> list[dict]:
+        """List all API keys for an account."""
+
+    # -- Emails --
+
+    @abstractmethod
+    def create_email(self, data: dict) -> dict:
+        """Create an email record. data must include message_id, account_sid, etc."""
+
+    @abstractmethod
+    def get_email(self, account_sid: str, message_id: str) -> Optional[dict]:
+        """Fetch an email by message_id within an account."""
+
+    @abstractmethod
+    def list_emails(self, account_sid: str) -> list[dict]:
+        """List emails for an account."""
+
+    @abstractmethod
+    def update_email(self, account_sid: str, message_id: str, updates: dict) -> Optional[dict]:
+        """Update an email record. Returns updated dict or None."""
+
     # -- Logs --
 
     @abstractmethod

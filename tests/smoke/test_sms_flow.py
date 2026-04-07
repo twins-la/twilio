@@ -268,9 +268,11 @@ class TestTwinPlane:
         resp = client.get("/_twin/scenarios")
         assert resp.status_code == 200
         data = resp.get_json()
-        assert len(data["scenarios"]) == 1
-        assert data["scenarios"][0]["name"] == "sms"
-        assert data["scenarios"][0]["status"] == "supported"
+        assert len(data["scenarios"]) >= 1
+        scenario_names = [s["name"] for s in data["scenarios"]]
+        assert "sms" in scenario_names
+        sms_scenario = [s for s in data["scenarios"] if s["name"] == "sms"][0]
+        assert sms_scenario["status"] == "supported"
 
     def test_logs(self, client, account):
         resp = client.get("/_twin/logs")

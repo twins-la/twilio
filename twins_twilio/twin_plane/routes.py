@@ -17,7 +17,8 @@ import logging
 from flask import Blueprint, g, jsonify, request
 
 from ..models import account_to_json, message_to_json, now_rfc2822
-from ..sids import generate_account_sid, generate_auth_token, generate_message_sid
+from ..email_models import email_to_json
+from ..sids import generate_account_sid, generate_auth_token, generate_message_sid, generate_api_key
 from ..webhooks import build_webhook_params, deliver_webhook
 from ..twiml import parse_message_response
 
@@ -47,6 +48,16 @@ def scenarios():
                     "webhook_signature_validation",
                     "message_status_progression",
                     "twiml_message_reply",
+                ],
+            },
+            {
+                "name": "email",
+                "status": "supported",
+                "description": "Email send via SendGrid v3 Mail Send API",
+                "capabilities": [
+                    "outbound_email",
+                    "email_status_progression",
+                    "sendgrid_api_key_auth",
                 ],
             },
         ],
@@ -110,6 +121,101 @@ def list_accounts():
     accounts = g.storage.list_accounts()
     items = [account_to_json(a, g.base_url) for a in accounts]
     return jsonify({"accounts": items})
+
+
+@twin_plane_bp.route("/api-keys", methods=["POST"])
+def create_api_key():
+    """Create a SendGrid-style API key for an account.
+
+    This is how users create API keys on the twin. Real SendGrid key
+    creation happens in the console; the twin makes it a simple API call.
+
+    Required JSON body:
+        account_sid: The account to associate the key with.
+
+    Optional:
+        name: A friendly name for the key.
+    """
+    if not request.is_json:
+        return jsonify({"error": "JSON body required"}), 400
+
+    data = request.json
+    account_sid = data.get("account_sid")
+    name = data.get("name", "")
+
+    if not account_sid:
+        return jsonify({"error": "'account_sid' is required"}), 400
+
+    account = g.storage.get_account(account_sid)
+    if not account:
+        return jsonify({"error": f"Account '{account_sid}' not found"}), 404
+
+    key_id, key_secret, full_key = generate_api_key()
+
+    g.storage.create_api_key(
+        key_id=key_id,
+        key_secret=key_secret,
+        account_sid=account_sid,
+        name=name or f"Twin API Key {key_id[:8]}",
+    )
+
+    g.storage.append_log({
+        "operation": "twin.api_key.create",
+        "account_sid": account_sid,
+        "key_id": key_id,
+    })
+
+    resp = jsonify({
+        "api_key": full_key,
+        "key_id": key_id,
+        "account_sid": account_sid,
+        "name": name or f"Twin API Key {key_id[:8]}",
+    })
+    resp.status_code = 201
+    return resp
+
+
+@twin_plane_bp.route("/emails", methods=["GET"])
+def list_emails():
+    """List sent emails for inspection.
+
+    Optional query params:
+        account_sid: Filter by account.
+    """
+    account_sid = request.args.get("account_sid")
+
+    if account_sid:
+        emails = g.storage.list_emails(account_sid)
+    else:
+        # List across all accounts
+        accounts = g.storage.list_accounts()
+        emails = []
+        for acct in accounts:
+            emails.extend(g.storage.list_emails(acct["sid"]))
+
+    items = [email_to_json(e) for e in emails]
+    return jsonify({"emails": items})
+
+
+@twin_plane_bp.route("/emails/<message_id>", methods=["GET"])
+def fetch_email(message_id):
+    """Fetch a single email by message_id."""
+    account_sid = request.args.get("account_sid")
+
+    if account_sid:
+        email = g.storage.get_email(account_sid, message_id)
+    else:
+        accounts = g.storage.list_accounts()
+        email = None
+        for acct in accounts:
+            email = g.storage.get_email(acct["sid"], message_id)
+            if email:
+                break
+
+    if not email:
+        return jsonify({"error": "Email not found"}), 404
+
+    return jsonify(email_to_json(email))
 
 
 @twin_plane_bp.route("/simulate/inbound", methods=["POST"])
