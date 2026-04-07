@@ -320,6 +320,45 @@ class TestEmailValidation:
         assert "field" in data["errors"][0]
 
 
+class TestEmailFormatValidation:
+    """Test email address format validation."""
+
+    def test_invalid_from_email(self, client, email_auth_headers):
+        resp = client.post(
+            "/v3/mail/send",
+            json={
+                "personalizations": [
+                    {"to": [{"email": "recipient@example.com"}]}
+                ],
+                "from": {"email": "not-an-email"},
+                "subject": "Test",
+                "content": [{"type": "text/plain", "value": "Test."}],
+            },
+            headers=email_auth_headers,
+        )
+        assert resp.status_code == 400
+        data = resp.get_json()
+        assert data["errors"][0]["field"] == "from.email"
+
+    def test_invalid_to_email(self, client, email_auth_headers):
+        resp = client.post(
+            "/v3/mail/send",
+            json={
+                "personalizations": [
+                    {"to": [{"email": "missing-domain"}]}
+                ],
+                "from": {"email": "sender@example.com"},
+                "subject": "Test",
+                "content": [{"type": "text/plain", "value": "Test."}],
+            },
+            headers=email_auth_headers,
+        )
+        assert resp.status_code == 400
+        data = resp.get_json()
+        assert "to" in data["errors"][0]["field"]
+        assert "email" in data["errors"][0]["field"]
+
+
 class TestEmailStatusProgression:
     """Test email delivery status simulation."""
 

@@ -11,11 +11,16 @@ import time
 
 from flask import Blueprint, g, jsonify, request, current_app
 
+import re
+
 from ..auth import require_auth
-from ..errors import bad_request, not_found
+from ..errors import missing_to, missing_from, missing_body, invalid_to_number, not_found
 from ..models import message_to_json, now_rfc2822
 from ..sids import generate_message_sid
 from ..webhooks import deliver_status_callback
+
+# E.164 phone number format
+_E164_PATTERN = re.compile(r"^\+[1-9]\d{1,14}$")
 
 logger = logging.getLogger(__name__)
 
@@ -75,11 +80,15 @@ def create_message(account_sid):
     status_callback_method = request.form.get("StatusCallbackMethod", "POST")
 
     if not to:
-        return bad_request("'To' is required")
+        return missing_to()
     if not from_number:
-        return bad_request("'From' is required")
+        return missing_from()
     if not body:
-        return bad_request("'Body' is required when not sending media")
+        return missing_body()
+
+    # Validate E.164 format for To
+    if not _E164_PATTERN.match(to):
+        return invalid_to_number(to)
 
     sid = generate_message_sid()
     now = now_rfc2822()

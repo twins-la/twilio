@@ -51,6 +51,10 @@ class TestAuthentication:
     def test_no_auth_returns_401(self, client, account):
         resp = client.get(f"/2010-04-01/Accounts/{account['sid']}.json")
         assert resp.status_code == 401
+        data = resp.get_json()
+        assert data["code"] == 20003
+        assert data["message"] == "Permission Denied"
+        assert resp.headers.get("WWW-Authenticate") == 'Basic realm="Twilio API"'
 
     def test_wrong_token_returns_401(self, client, account):
         creds = base64.b64encode(f"{account['sid']}:wrongtoken".encode()).decode()
@@ -59,6 +63,10 @@ class TestAuthentication:
             headers={"Authorization": f"Basic {creds}"},
         )
         assert resp.status_code == 401
+        data = resp.get_json()
+        assert data["code"] == 20003
+        assert data["message"] == "Permission Denied"
+        assert resp.headers.get("WWW-Authenticate") == 'Basic realm="Twilio API"'
 
     def test_mismatched_account_sid_returns_401(self, client, account, auth_headers):
         resp = client.get(
@@ -66,6 +74,7 @@ class TestAuthentication:
             headers=auth_headers,
         )
         assert resp.status_code == 401
+        assert resp.get_json()["code"] == 20003
 
 
 class TestPhoneNumbers:
@@ -135,6 +144,64 @@ class TestPhoneNumbers:
         assert data["sms_method"] == "POST"
 
 
+class TestPhoneNumberValidation:
+    """Test phone number request validation and error codes."""
+
+    def test_create_missing_phone_number(self, client, account, auth_headers):
+        resp = client.post(
+            f"/2010-04-01/Accounts/{account['sid']}/IncomingPhoneNumbers.json",
+            headers=auth_headers,
+            data={},
+        )
+        assert resp.status_code == 400
+        data = resp.get_json()
+        assert data["code"] == 21421
+
+    def test_create_invalid_phone_number_format(self, client, account, auth_headers):
+        resp = client.post(
+            f"/2010-04-01/Accounts/{account['sid']}/IncomingPhoneNumbers.json",
+            headers=auth_headers,
+            data={"PhoneNumber": "not-valid"},
+        )
+        assert resp.status_code == 400
+        data = resp.get_json()
+        assert data["code"] == 21421
+        assert "not-valid" in data["message"]
+
+    def test_fetch_nonexistent_phone_number(self, client, account, auth_headers):
+        resp = client.get(
+            f"/2010-04-01/Accounts/{account['sid']}/IncomingPhoneNumbers/PN00000000000000000000000000000000.json",
+            headers=auth_headers,
+        )
+        assert resp.status_code == 404
+        data = resp.get_json()
+        assert data["code"] == 20404
+        assert "IncomingPhoneNumbers" in data["message"]
+
+
+class TestNotFoundErrors:
+    """Test 404 error response format."""
+
+    def test_fetch_nonexistent_message(self, client, account, auth_headers):
+        resp = client.get(
+            f"/2010-04-01/Accounts/{account['sid']}/Messages/SM00000000000000000000000000000000.json",
+            headers=auth_headers,
+        )
+        assert resp.status_code == 404
+        data = resp.get_json()
+        assert data["code"] == 20404
+        assert "Messages/SM00000000000000000000000000000000" in data["message"]
+
+    def test_not_found_includes_uri(self, client, account, auth_headers):
+        """404 message should include the requested resource URI."""
+        resp = client.get(
+            f"/2010-04-01/Accounts/{account['sid']}/Messages/SM00000000000000000000000000000000.json",
+            headers=auth_headers,
+        )
+        data = resp.get_json()
+        assert "/2010-04-01/Accounts/" in data["message"]
+
+
 class TestOutboundSMS:
     """Test sending outbound SMS messages."""
 
@@ -165,6 +232,58 @@ class TestOutboundSMS:
             data={"From": "+15551234567", "Body": "Hello"},
         )
         assert resp.status_code == 400
+        data = resp.get_json()
+        assert data["code"] == 21604
+        assert "To" in data["message"]
+
+    def test_send_message_missing_from(self, client, account, auth_headers):
+        resp = client.post(
+            f"/2010-04-01/Accounts/{account['sid']}/Messages.json",
+            headers=auth_headers,
+            data={"To": "+15559876543", "Body": "Hello"},
+        )
+        assert resp.status_code == 400
+        data = resp.get_json()
+        assert data["code"] == 21603
+        assert "From" in data["message"]
+
+    def test_send_message_missing_body(self, client, account, auth_headers):
+        resp = client.post(
+            f"/2010-04-01/Accounts/{account['sid']}/Messages.json",
+            headers=auth_headers,
+            data={"To": "+15559876543", "From": "+15551234567"},
+        )
+        assert resp.status_code == 400
+        data = resp.get_json()
+        assert data["code"] == 21602
+        assert "body" in data["message"].lower()
+
+    def test_send_message_invalid_to_format(self, client, account, auth_headers):
+        """To number must be in E.164 format."""
+        resp = client.post(
+            f"/2010-04-01/Accounts/{account['sid']}/Messages.json",
+            headers=auth_headers,
+            data={"To": "not-a-number", "From": "+15551234567", "Body": "Hello"},
+        )
+        assert resp.status_code == 400
+        data = resp.get_json()
+        assert data["code"] == 21211
+        assert "not-a-number" in data["message"]
+
+    def test_send_message_error_format(self, client, account, auth_headers):
+        """Verify error responses include all Twilio error fields."""
+        resp = client.post(
+            f"/2010-04-01/Accounts/{account['sid']}/Messages.json",
+            headers=auth_headers,
+            data={"From": "+15551234567", "Body": "Hello"},
+        )
+        data = resp.get_json()
+        assert "code" in data
+        assert "message" in data
+        assert "more_info" in data
+        assert "status" in data
+        assert data["status"] == 400
+        assert "twilio.com/docs/errors" in data["more_info"]
 
     def test_message_status_progression(self, client, account, auth_headers):
         """Verify message progresses from queued through delivered."""

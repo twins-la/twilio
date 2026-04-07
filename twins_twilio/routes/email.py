@@ -43,6 +43,14 @@ def _simulate_delivery(app, storage, email_data: dict):
             })
 
 
+def _is_valid_email(email: str) -> bool:
+    """Basic email format validation (must contain @ with local and domain parts)."""
+    if not email or not isinstance(email, str):
+        return False
+    parts = email.split("@")
+    return len(parts) == 2 and len(parts[0]) > 0 and "." in parts[1]
+
+
 def _validate_mail_send(data: dict):
     """Validate the SendGrid v3 mail/send request body.
 
@@ -60,6 +68,10 @@ def _validate_mail_send(data: dict):
     from_obj = data.get("from")
     if not from_obj or not isinstance(from_obj, dict) or not from_obj.get("email"):
         return "The from object must be provided for every email send.", "from"
+
+    # Validate from email format
+    if not _is_valid_email(from_obj["email"]):
+        return f"The from email address is not valid. Got: {from_obj['email']}", "from.email"
 
     # subject: required at top level or in every personalization
     top_subject = data.get("subject")
@@ -100,6 +112,11 @@ def _validate_mail_send(data: dict):
             if not isinstance(recipient, dict) or not recipient.get("email"):
                 return (
                     f"Each recipient must have an 'email' field.",
+                    f"personalizations[{i}].to[{j}].email",
+                )
+            if not _is_valid_email(recipient["email"]):
+                return (
+                    f"Does not contain a valid address.",
                     f"personalizations[{i}].to[{j}].email",
                 )
 

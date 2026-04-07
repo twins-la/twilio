@@ -11,7 +11,7 @@ import re
 from flask import Blueprint, g, jsonify, request
 
 from ..auth import require_auth
-from ..errors import bad_request, not_found
+from ..errors import bad_request, invalid_phone_number, not_found
 from ..models import now_rfc2822, phone_number_to_json
 from ..sids import generate_phone_number_sid
 
@@ -61,14 +61,11 @@ def create_phone_number(account_sid):
     """Provision a phone number."""
     phone_number = request.form.get("PhoneNumber")
     if not phone_number:
-        return bad_request("PhoneNumber is required")
+        return invalid_phone_number()
 
-    # Validate E.164-ish format (Twilio requires E.164 for provisioning)
+    # Validate E.164 format (Twilio requires E.164 for provisioning)
     if not re.match(r"^\+[1-9]\d{1,14}$", phone_number):
-        return bad_request(
-            f"The phone number '{phone_number}' is not valid. "
-            "Phone numbers must be in E.164 format (e.g., +15551234567)."
-        )
+        return invalid_phone_number(phone_number)
 
     sid = generate_phone_number_sid()
     now = now_rfc2822()
