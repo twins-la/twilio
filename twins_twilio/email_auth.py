@@ -5,6 +5,7 @@ in the format: SG.{key_id}.{key_secret}
 """
 
 import functools
+import hmac
 
 from flask import request, g
 
@@ -34,7 +35,7 @@ def require_api_key(f):
         key_id, key_secret = parts
 
         api_key = g.storage.get_api_key_by_id(key_id)
-        if not api_key or api_key["key_secret"] != key_secret:
+        if not api_key or not hmac.compare_digest(api_key["key_secret"], key_secret):
             return email_authentication_error()
 
         g.account_sid = api_key["account_sid"]
