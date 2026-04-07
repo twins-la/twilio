@@ -298,14 +298,16 @@ class TestOutboundSMS:
         )
         sid = resp.get_json()["sid"]
 
-        # Wait for background delivery simulation
-        time.sleep(1.0)
-
-        fetch_resp = client.get(
-            f"/2010-04-01/Accounts/{account['sid']}/Messages/{sid}.json",
-            headers=auth_headers,
-        )
-        data = fetch_resp.get_json()
+        # Poll for background delivery simulation to complete
+        for _ in range(30):
+            time.sleep(0.1)
+            fetch_resp = client.get(
+                f"/2010-04-01/Accounts/{account['sid']}/Messages/{sid}.json",
+                headers=auth_headers,
+            )
+            data = fetch_resp.get_json()
+            if data["status"] == "delivered":
+                break
         assert data["status"] == "delivered"
         assert data["date_sent"] != ""
 

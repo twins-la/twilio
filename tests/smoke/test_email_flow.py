@@ -377,12 +377,14 @@ class TestEmailStatusProgression:
         )
         message_id = resp.headers["X-Message-Id"]
 
-        # Wait for background delivery simulation
-        time.sleep(0.8)
-
-        fetch_resp = client.get(f"/_twin/emails/{message_id}")
-        assert fetch_resp.status_code == 200
-        data = fetch_resp.get_json()
+        # Poll for background delivery simulation to complete
+        for _ in range(30):
+            time.sleep(0.1)
+            fetch_resp = client.get(f"/_twin/emails/{message_id}")
+            assert fetch_resp.status_code == 200
+            data = fetch_resp.get_json()
+            if data["status"] == "delivered":
+                break
         assert data["status"] == "delivered"
 
 
