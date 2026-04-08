@@ -108,8 +108,8 @@ class TwinStorage(ABC):
         """Fetch a feedback record by ID. Returns None if not found."""
 
     @abstractmethod
-    def list_feedback(self, status: Optional[str] = None) -> list[dict]:
-        """List feedback records, optionally filtered by status."""
+    def list_feedback(self, status: Optional[str] = None, account_sid: Optional[str] = None) -> list[dict]:
+        """List feedback records, optionally filtered by status and/or account."""
 
     @abstractmethod
     def update_feedback(self, feedback_id: str, updates: dict) -> Optional[dict]:
@@ -122,5 +122,5 @@ class TwinStorage(ABC):
         """Append an operation log entry."""
 
     @abstractmethod
-    def list_logs(self, limit: int = 100, offset: int = 0) -> list[dict]:
-        """Retrieve operation logs."""
+    def list_logs(self, limit: int = 100, offset: int = 0, account_sid: Optional[str] = None) -> list[dict]:
+        """Retrieve operation logs, optionally filtered by account."""

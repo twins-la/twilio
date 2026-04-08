@@ -29,11 +29,12 @@ class TestAccountCreation:
         assert data["status"] == "active"
         assert data["type"] == "Full"
 
-    def test_list_accounts(self, client, account):
-        resp = client.get("/_twin/accounts")
+    def test_list_accounts(self, client, account, auth_headers):
+        resp = client.get("/_twin/accounts", headers=auth_headers)
         assert resp.status_code == 200
         data = resp.get_json()
-        assert len(data["accounts"]) >= 1
+        assert len(data["accounts"]) == 1
+        assert data["accounts"][0]["sid"] == account["sid"]
 
     def test_fetch_account_via_api(self, client, account, auth_headers):
         resp = client.get(
@@ -354,11 +355,14 @@ class TestInboundSMS:
             data={"PhoneNumber": "+15551234567"},
         )
 
-        resp = client.post("/_twin/simulate/inbound", json={
-            "from": "+15559876543",
-            "to": "+15551234567",
-            "body": "Hello twin!",
-        })
+        resp = client.post("/_twin/simulate/inbound",
+            headers=auth_headers,
+            json={
+                "from": "+15559876543",
+                "to": "+15551234567",
+                "body": "Hello twin!",
+            },
+        )
         assert resp.status_code == 201
         data = resp.get_json()
         assert data["message"]["sid"].startswith("SM")
@@ -366,12 +370,15 @@ class TestInboundSMS:
         assert data["message"]["direction"] == "inbound"
         assert data["webhook_delivered"] is False
 
-    def test_simulate_inbound_unknown_number(self, client):
-        resp = client.post("/_twin/simulate/inbound", json={
-            "from": "+15559876543",
-            "to": "+15550000000",
-            "body": "Hello",
-        })
+    def test_simulate_inbound_unknown_number(self, client, account, auth_headers):
+        resp = client.post("/_twin/simulate/inbound",
+            headers=auth_headers,
+            json={
+                "from": "+15559876543",
+                "to": "+15550000000",
+                "body": "Hello",
+            },
+        )
         assert resp.status_code == 404
 
 
@@ -395,8 +402,8 @@ class TestTwinPlane:
         sms_scenario = [s for s in data["scenarios"] if s["name"] == "sms"][0]
         assert sms_scenario["status"] == "supported"
 
-    def test_logs(self, client, account):
-        resp = client.get("/_twin/logs")
+    def test_logs(self, client, account, auth_headers):
+        resp = client.get("/_twin/logs", headers=auth_headers)
         assert resp.status_code == 200
         data = resp.get_json()
         assert isinstance(data["logs"], list)

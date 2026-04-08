@@ -25,22 +25,29 @@ SMS/Voice API: HTTP Basic Auth
 Email API: Bearer token
   Header: Authorization: Bearer SG.{key_id}.{key_secret}
 
-Create credentials via the Twin Plane (no auth required):
-  POST /_twin/accounts          — returns { sid, auth_token }
-  POST /_twin/api-keys          — returns { key_id, key_secret } (for email)
+Twin Plane: HTTP Basic Auth (same credentials)
+  Most Twin Plane operations use the same AccountSid:AuthToken.
+  Exception: POST /_twin/accounts requires no auth (creates credentials).
+
+Create credentials:
+  POST /_twin/accounts          — no auth required, returns { sid, auth_token }
 
 ## Key Endpoints
 
 Twin Plane (no auth):
   GET  /_twin/health             — status check
   GET  /_twin/scenarios          — supported scenarios
-  GET  /_twin/logs               — operation logs
+  GET  /_twin/settings           — twin settings
   POST /_twin/accounts           — create account
+
+Twin Plane (Basic Auth — use AccountSid:AuthToken):
+  GET  /_twin/accounts           — get your account details
+  GET  /_twin/logs               — your operation logs
   POST /_twin/api-keys           — create SendGrid API key
-  GET  /_twin/emails             — list emails
+  GET  /_twin/emails             — list your emails
   POST /_twin/simulate/inbound   — simulate inbound SMS
   POST /_twin/feedback           — submit feedback
-  GET  /_twin/feedback           — list feedback
+  GET  /_twin/feedback           — list your feedback
 
 Twilio SMS API (Basic Auth):
   POST /2010-04-01/Accounts/{AccountSid}/Messages.json         — send SMS
@@ -54,7 +61,7 @@ SendGrid Email API (Bearer Auth):
 
 ## Quick Start
 
-1. Create an account:
+1. Create an account (no auth needed):
    curl -X POST https://twilio.twins.la/_twin/accounts \\
      -H "Content-Type: application/json" \\
      -d '{"friendly_name": "My App"}'
@@ -64,8 +71,8 @@ SendGrid Email API (Bearer Auth):
      -u "{sid}:{auth_token}" \\
      -d "To=+15551234567" -d "From=+15559876543" -d "Body=Hello from twin"
 
-3. Check the message status:
-   curl https://twilio.twins.la/2010-04-01/Accounts/{sid}/Messages/{message_sid}.json \\
+3. Check logs (same credentials work for Twin Plane):
+   curl https://twilio.twins.la/_twin/logs \\
      -u "{sid}:{auth_token}"
 
 ## Local Usage
@@ -87,8 +94,9 @@ We actively want your feedback. If you encounter a limitation, a missing
 scenario, unexpected behavior, or have a feature request — please tell us.
 Your feedback directly shapes what we build next.
 
-Submit feedback:
+Submit feedback (requires Basic Auth):
   curl -X POST https://twilio.twins.la/_twin/feedback \\
+    -u "{sid}:{auth_token}" \\
     -H "Content-Type: application/json" \\
     -d '{
       "body": "Description of what you encountered",
@@ -104,7 +112,6 @@ Optional fields:
   context     — Any structured data that helps us understand the issue:
                 error codes, message SIDs, request/response snippets,
                 scenario names, or steps to reproduce.
-  account_sid — Your account SID, if you have one.
 
 Tips for useful feedback:
   - Include IDs (message SIDs, error codes) when reporting failures.

@@ -17,11 +17,11 @@ import pytest
 class TestApiKeyCreation:
     """Test API key management via Twin Plane."""
 
-    def test_create_api_key(self, client, account):
-        resp = client.post("/_twin/api-keys", json={
-            "account_sid": account["sid"],
-            "name": "Test Key",
-        })
+    def test_create_api_key(self, client, account, auth_headers):
+        resp = client.post("/_twin/api-keys",
+            headers=auth_headers,
+            json={"name": "Test Key"},
+        )
         assert resp.status_code == 201
         data = resp.get_json()
         assert data["api_key"].startswith("SG.")
@@ -33,24 +33,27 @@ class TestApiKeyCreation:
         assert len(parts[0]) > 0
         assert len(parts[1]) > 0
 
-    def test_create_api_key_missing_account(self, client):
-        resp = client.post("/_twin/api-keys", json={
-            "account_sid": "AC00000000000000000000000000000000",
-        })
-        assert resp.status_code == 404
+    def test_create_api_key_no_auth_returns_401(self, client, account):
+        resp = client.post("/_twin/api-keys", json={"name": "Test"})
+        assert resp.status_code == 401
 
-    def test_create_api_key_no_account_sid(self, client):
-        resp = client.post("/_twin/api-keys", json={})
-        assert resp.status_code == 400
+    def test_create_api_key_wrong_auth_returns_401(self, client, account):
+        import base64
+        creds = base64.b64encode(f"{account['sid']}:wrongtoken".encode()).decode()
+        resp = client.post("/_twin/api-keys",
+            headers={"Authorization": f"Basic {creds}"},
+            json={"name": "Test"},
+        )
+        assert resp.status_code == 401
 
 
 @pytest.fixture
-def api_key(client, account):
+def api_key(client, account, auth_headers):
     """Create and return a test API key via Twin Plane."""
-    resp = client.post("/_twin/api-keys", json={
-        "account_sid": account["sid"],
-        "name": "Test Key",
-    })
+    resp = client.post("/_twin/api-keys",
+        headers=auth_headers,
+        json={"name": "Test Key"},
+    )
     assert resp.status_code == 201
     return resp.get_json()
 
@@ -362,7 +365,7 @@ class TestEmailFormatValidation:
 class TestEmailStatusProgression:
     """Test email delivery status simulation."""
 
-    def test_email_progresses_to_delivered(self, client, account, email_auth_headers):
+    def test_email_progresses_to_delivered(self, client, account, auth_headers, email_auth_headers):
         resp = client.post(
             "/v3/mail/send",
             json={
@@ -380,7 +383,7 @@ class TestEmailStatusProgression:
         # Poll for background delivery simulation to complete
         for _ in range(30):
             time.sleep(0.1)
-            fetch_resp = client.get(f"/_twin/emails/{message_id}")
+            fetch_resp = client.get(f"/_twin/emails/{message_id}", headers=auth_headers)
             assert fetch_resp.status_code == 200
             data = fetch_resp.get_json()
             if data["status"] == "delivered":
@@ -391,7 +394,7 @@ class TestEmailStatusProgression:
 class TestEmailRetrieval:
     """Test email retrieval via Twin Plane."""
 
-    def test_list_emails(self, client, account, email_auth_headers):
+    def test_list_emails(self, client, account, auth_headers, email_auth_headers):
         # Send an email first
         client.post(
             "/v3/mail/send",
@@ -406,7 +409,7 @@ class TestEmailRetrieval:
             headers=email_auth_headers,
         )
 
-        resp = client.get(f"/_twin/emails?account_sid={account['sid']}")
+        resp = client.get("/_twin/emails", headers=auth_headers)
         assert resp.status_code == 200
         data = resp.get_json()
         assert len(data["emails"]) >= 1
@@ -414,7 +417,7 @@ class TestEmailRetrieval:
         assert email["from"]["email"] == "sender@example.com"
         assert email["subject"] == "List test"
 
-    def test_fetch_email(self, client, email_auth_headers):
+    def test_fetch_email(self, client, auth_headers, email_auth_headers):
         send_resp = client.post(
             "/v3/mail/send",
             json={
@@ -429,19 +432,19 @@ class TestEmailRetrieval:
         )
         message_id = send_resp.headers["X-Message-Id"]
 
-        resp = client.get(f"/_twin/emails/{message_id}")
+        resp = client.get(f"/_twin/emails/{message_id}", headers=auth_headers)
         assert resp.status_code == 200
         data = resp.get_json()
         assert data["message_id"] == message_id
         assert data["subject"] == "Fetch test"
         assert data["personalizations"][0]["to"][0]["email"] == "recipient@example.com"
 
-    def test_fetch_nonexistent_email(self, client):
-        resp = client.get("/_twin/emails/nonexistent123")
+    def test_fetch_nonexistent_email(self, client, auth_headers):
+        resp = client.get("/_twin/emails/nonexistent123", headers=auth_headers)
         assert resp.status_code == 404
 
-    def test_list_emails_all_accounts(self, client, account, email_auth_headers):
-        """List emails without specifying account_sid."""
+    def test_list_emails_scoped_to_account(self, client, account, auth_headers, email_auth_headers):
+        """List emails returns only the authenticated account's emails."""
         client.post(
             "/v3/mail/send",
             json={
@@ -449,13 +452,13 @@ class TestEmailRetrieval:
                     {"to": [{"email": "recipient@example.com"}]}
                 ],
                 "from": {"email": "sender@example.com"},
-                "subject": "All accounts test",
+                "subject": "Scoped test",
                 "content": [{"type": "text/plain", "value": "Test."}],
             },
             headers=email_auth_headers,
         )
 
-        resp = client.get("/_twin/emails")
+        resp = client.get("/_twin/emails", headers=auth_headers)
         assert resp.status_code == 200
         data = resp.get_json()
         assert len(data["emails"]) >= 1
@@ -478,7 +481,7 @@ class TestEmailScenario:
 class TestEmailLogging:
     """Test that email operations are logged."""
 
-    def test_send_email_logged(self, client, account, email_auth_headers):
+    def test_send_email_logged(self, client, account, auth_headers, email_auth_headers):
         client.post(
             "/v3/mail/send",
             json={
@@ -492,7 +495,7 @@ class TestEmailLogging:
             headers=email_auth_headers,
         )
 
-        resp = client.get("/_twin/logs")
+        resp = client.get("/_twin/logs", headers=auth_headers)
         assert resp.status_code == 200
         data = resp.get_json()
         operations = [log["entry"]["operation"] for log in data["logs"]]
