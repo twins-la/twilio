@@ -32,6 +32,10 @@ def generate_phone_number_sid() -> str:
     return generate_sid("PN")
 
 
+def generate_feedback_id() -> str:
+    return generate_sid("FB")
+
+
 def generate_auth_token() -> str:
     """Generate a 32-character hex auth token."""
     return secrets.token_hex(16)

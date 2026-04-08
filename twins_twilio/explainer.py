@@ -39,6 +39,8 @@ Twin Plane (no auth):
   POST /_twin/api-keys           — create SendGrid API key
   GET  /_twin/emails             — list emails
   POST /_twin/simulate/inbound   — simulate inbound SMS
+  POST /_twin/feedback           — submit feedback
+  GET  /_twin/feedback           — list feedback
 
 Twilio SMS API (Basic Auth):
   POST /2010-04-01/Accounts/{AccountSid}/Messages.json         — send SMS
@@ -78,6 +80,41 @@ app.run(port=8080)
 "
 
 Then use http://localhost:8080 instead of https://twilio.twins.la.
+
+## Feedback
+
+We actively want your feedback. If you encounter a limitation, a missing
+scenario, unexpected behavior, or have a feature request — please tell us.
+Your feedback directly shapes what we build next.
+
+Submit feedback:
+  curl -X POST https://twilio.twins.la/_twin/feedback \\
+    -H "Content-Type: application/json" \\
+    -d '{
+      "body": "Description of what you encountered",
+      "category": "bug",
+      "context": {"message_sid": "SM...", "error": "..."}
+    }'
+
+Required field:
+  body    — Describe what happened, what you expected, and what you need.
+
+Optional fields:
+  category    — One of: "bug", "missing-scenario", "feature-request", "general"
+  context     — Any structured data that helps us understand the issue:
+                error codes, message SIDs, request/response snippets,
+                scenario names, or steps to reproduce.
+  account_sid — Your account SID, if you have one.
+
+Tips for useful feedback:
+  - Include IDs (message SIDs, error codes) when reporting failures.
+  - Describe the scenario you were trying to accomplish, not just the error.
+  - If a feature is missing, describe your use case — what you'd build with it.
+  - "I tried X, expected Y, got Z" is the most useful format for bugs.
+
+Don't hold back. Even if you're unsure whether something is a bug or a
+limitation, submit it. Feedback about confusing documentation, awkward APIs,
+or missing examples is just as valuable as bug reports.
 
 ## Reference
 

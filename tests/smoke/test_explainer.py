@@ -36,6 +36,7 @@ class TestAgentInstructions:
         assert "Key Endpoints" in text
         assert "Quick Start" in text
         assert "Local Usage" in text
+        assert "Feedback" in text
         assert "Reference" in text
 
     def test_is_self_contained(self, client):
@@ -44,6 +45,7 @@ class TestAgentInstructions:
         assert "/2010-04-01/Accounts/" in text
         assert "/v3/mail/send" in text
         assert "/_twin/accounts" in text
+        assert "/_twin/feedback" in text
         # Must contain auth info
         assert "Basic Auth" in text
         assert "Bearer" in text

@@ -18,7 +18,7 @@ from flask import Blueprint, g, jsonify, request
 
 from ..models import account_to_json, message_to_json, now_rfc2822
 from ..email_models import email_to_json
-from ..sids import generate_account_sid, generate_auth_token, generate_message_sid, generate_api_key
+from ..sids import generate_account_sid, generate_auth_token, generate_message_sid, generate_api_key, generate_feedback_id
 from ..webhooks import build_webhook_params, deliver_webhook
 from ..twiml import parse_message_response
 
@@ -372,3 +372,107 @@ def simulate_inbound_sms():
     }
 
     return jsonify(result), 201
+
+
+# -- Feedback --
+
+
+@twin_plane_bp.route("/feedback", methods=["POST"])
+def submit_feedback():
+    """Submit feedback about the twin.
+
+    Accepts freeform feedback from agents. No authentication required.
+
+    Required JSON body:
+        body: Freeform feedback text.
+
+    Optional:
+        category: One of "bug", "missing-scenario", "feature-request", "general".
+        context: Dict of structured data (error codes, message SIDs, scenario names, etc.).
+        account_sid: The account SID of the agent submitting feedback.
+    """
+    if not request.is_json:
+        return jsonify({"error": "JSON body required"}), 400
+
+    data = request.json
+    body = data.get("body")
+
+    if not body or not body.strip():
+        return jsonify({"error": "'body' is required"}), 400
+
+    feedback_id = generate_feedback_id()
+    now = now_rfc2822()
+
+    feedback_data = {
+        "id": feedback_id,
+        "body": body.strip(),
+        "category": data.get("category", ""),
+        "context": data.get("context", {}),
+        "account_sid": data.get("account_sid", ""),
+        "status": "pending",
+        "date_created": now,
+        "date_updated": now,
+    }
+    feedback = g.storage.create_feedback(feedback_data)
+
+    g.storage.append_log({
+        "operation": "twin.feedback.submit",
+        "feedback_id": feedback_id,
+        "category": feedback_data["category"],
+    })
+
+    return jsonify(feedback), 201
+
+
+@twin_plane_bp.route("/feedback", methods=["GET"])
+def list_feedback():
+    """List submitted feedback.
+
+    Optional query params:
+        status: Filter by status (pending, reviewed, published).
+    """
+    status = request.args.get("status")
+    items = g.storage.list_feedback(status=status)
+    return jsonify({"feedback": items})
+
+
+@twin_plane_bp.route("/feedback/<feedback_id>", methods=["GET"])
+def get_feedback(feedback_id):
+    """Fetch a single feedback item."""
+    feedback = g.storage.get_feedback(feedback_id)
+    if not feedback:
+        return jsonify({"error": "Feedback not found"}), 404
+    return jsonify(feedback)
+
+
+@twin_plane_bp.route("/feedback/<feedback_id>", methods=["POST"])
+def update_feedback(feedback_id):
+    """Update a feedback record (e.g., change status).
+
+    Used by the review pipeline to mark feedback as reviewed or published.
+
+    Accepts JSON body with:
+        status: New status (e.g., "reviewed", "published").
+    """
+    if not request.is_json:
+        return jsonify({"error": "JSON body required"}), 400
+
+    existing = g.storage.get_feedback(feedback_id)
+    if not existing:
+        return jsonify({"error": "Feedback not found"}), 404
+
+    data = request.json
+    updates = {}
+    if "status" in data:
+        updates["status"] = data["status"]
+    updates["date_updated"] = now_rfc2822()
+
+    feedback = g.storage.update_feedback(feedback_id, updates)
+
+    g.storage.append_log({
+        "operation": "twin.feedback.update",
+        "feedback_id": feedback_id,
+        "status": updates.get("status", ""),
+    })
+
+    return jsonify(feedback)

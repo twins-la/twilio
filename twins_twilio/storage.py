@@ -97,6 +97,24 @@ class TwinStorage(ABC):
     def update_email(self, account_sid: str, message_id: str, updates: dict) -> Optional[dict]:
         """Update an email record. Returns updated dict or None."""
 
+    # -- Feedback --
+
+    @abstractmethod
+    def create_feedback(self, data: dict) -> dict:
+        """Create a feedback record. data must include id, body, status, timestamps."""
+
+    @abstractmethod
+    def get_feedback(self, feedback_id: str) -> Optional[dict]:
+        """Fetch a feedback record by ID. Returns None if not found."""
+
+    @abstractmethod
+    def list_feedback(self, status: Optional[str] = None) -> list[dict]:
+        """List feedback records, optionally filtered by status."""
+
+    @abstractmethod
+    def update_feedback(self, feedback_id: str, updates: dict) -> Optional[dict]:
+        """Update a feedback record. Returns updated dict or None."""
+
     # -- Logs --
 
     @abstractmethod
