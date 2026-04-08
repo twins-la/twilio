@@ -175,6 +175,58 @@ def create_api_key():
     return resp
 
 
+@twin_plane_bp.route("/verified-senders", methods=["POST"])
+@require_twin_auth
+def create_verified_sender():
+    """Register a verified sender identity for the authenticated account.
+
+    Required JSON body:
+        email: The sender email address to verify.
+
+    Optional:
+        name: A display name for the sender.
+    """
+    if not request.is_json:
+        return jsonify({"error": "JSON body required"}), 400
+
+    data = request.json
+    email = data.get("email")
+    if not email or not isinstance(email, str) or "@" not in email:
+        return jsonify({"error": "'email' is required and must be a valid email address"}), 400
+
+    name = data.get("name", "")
+
+    sender = g.storage.create_verified_sender(
+        account_sid=g.account_sid,
+        email=email,
+        name=name,
+    )
+
+    g.storage.append_log({
+        "operation": "twin.verified_sender.create",
+        "account_sid": g.account_sid,
+        "email": email,
+    })
+
+    resp = jsonify(sender)
+    resp.status_code = 201
+    return resp
+
+
+@twin_plane_bp.route("/verified-senders", methods=["GET"])
+@require_twin_or_admin_auth
+def list_verified_senders():
+    """List verified senders. Admin: all. Tenant: own."""
+    if g.is_admin:
+        accounts = g.storage.list_accounts()
+        senders = []
+        for acct in accounts:
+            senders.extend(g.storage.list_verified_senders(acct["sid"]))
+    else:
+        senders = g.storage.list_verified_senders(g.account_sid)
+    return jsonify({"verified_senders": senders})
+
+
 @twin_plane_bp.route("/emails", methods=["GET"])
 @require_twin_or_admin_auth
 def list_emails():

@@ -10,7 +10,7 @@ import time
 from flask import Blueprint, g, request, current_app
 
 from ..email_auth import require_api_key
-from ..email_errors import email_bad_request
+from ..email_errors import email_bad_request, email_sender_not_verified
 from ..models import now_rfc2822
 from ..sids import generate_email_id
 
@@ -141,6 +141,12 @@ def mail_send():
     error_message, error_field = _validate_mail_send(data)
     if error_message:
         return email_bad_request(error_message, error_field)
+
+    # Verify sender identity — real SendGrid returns 403 for unverified senders
+    from_email = data["from"]["email"]
+    verified = g.storage.get_verified_sender_by_email(g.account_sid, from_email)
+    if not verified:
+        return email_sender_not_verified()
 
     message_id = generate_email_id()
     now = now_rfc2822()

@@ -115,6 +115,20 @@ class TwinStorage(ABC):
     def update_feedback(self, feedback_id: str, updates: dict) -> Optional[dict]:
         """Update a feedback record. Returns updated dict or None."""
 
+    # -- Verified Senders --
+
+    @abstractmethod
+    def create_verified_sender(self, account_sid: str, email: str, name: str = "") -> dict:
+        """Register a verified sender identity. Returns the stored sender dict."""
+
+    @abstractmethod
+    def get_verified_sender_by_email(self, account_sid: str, email: str) -> Optional[dict]:
+        """Check if an email is a verified sender for the account. Returns None if not."""
+
+    @abstractmethod
+    def list_verified_senders(self, account_sid: str) -> list[dict]:
+        """List all verified senders for an account."""
+
     # -- Logs --
 
     @abstractmethod

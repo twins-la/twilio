@@ -36,3 +36,14 @@ def email_authentication_error():
 
 def email_bad_request(message: str, field: str | None = None):
     return email_error_response(400, message, field)
+
+
+def email_sender_not_verified():
+    return email_error_response(
+        403,
+        "The from address does not match a verified Sender Identity. "
+        "Mail cannot be sent until this error is resolved. "
+        "Visit https://sendgrid.com/docs/for-developers/sending-email/"
+        "sender-identity/ to see the Sender Identity requirements",
+        "from",
+    )
