@@ -6,6 +6,7 @@ Twilio uses HTTP Basic Auth where:
 """
 
 import functools
+import hmac
 
 from flask import request, g
 
@@ -33,7 +34,7 @@ def require_auth(f):
             return authentication_error()
 
         account = g.storage.get_account(account_sid)
-        if not account or account["auth_token"] != auth_token:
+        if not account or not hmac.compare_digest(account["auth_token"], auth_token):
             return authentication_error()
 
         g.account_sid = account_sid
