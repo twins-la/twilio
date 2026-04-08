@@ -29,6 +29,11 @@ Twin Plane: HTTP Basic Auth (same credentials)
   Most Twin Plane operations use the same AccountSid:AuthToken.
   Exception: POST /_twin/accounts requires no auth (creates credentials).
 
+Twin Plane Admin: Bearer token
+  Header: Authorization: Bearer <admin_token>
+  Service-wide operations (list all accounts, review feedback, etc.)
+  require an admin token set by the deployment owner.
+
 Create credentials:
   POST /_twin/accounts          — no auth required, returns { sid, auth_token }
 
@@ -48,6 +53,13 @@ Twin Plane (Basic Auth — use AccountSid:AuthToken):
   POST /_twin/simulate/inbound   — simulate inbound SMS
   POST /_twin/feedback           — submit feedback
   GET  /_twin/feedback           — list your feedback
+
+Twin Plane (Admin Bearer — service-wide access):
+  GET  /_twin/accounts           — list all accounts
+  GET  /_twin/logs               — all operation logs
+  GET  /_twin/emails             — all emails
+  GET  /_twin/feedback           — all feedback
+  POST /_twin/feedback/<id>      — update any feedback (for review pipeline)
 
 Twilio SMS API (Basic Auth):
   POST /2010-04-01/Accounts/{AccountSid}/Messages.json         — send SMS

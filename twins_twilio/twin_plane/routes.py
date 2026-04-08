@@ -23,12 +23,12 @@ import logging
 
 from flask import Blueprint, g, jsonify, request
 
-from ..models import account_to_json, message_to_json, now_rfc2822
+from ..models import account_to_json, account_to_json_public, message_to_json, now_rfc2822
 from ..email_models import email_to_json
 from ..sids import generate_account_sid, generate_auth_token, generate_message_sid, generate_api_key, generate_feedback_id
 from ..webhooks import build_webhook_params, deliver_webhook
 from ..twiml import parse_message_response
-from .auth import require_twin_auth
+from .auth import require_twin_auth, require_twin_or_admin_auth
 
 logger = logging.getLogger(__name__)
 
@@ -73,12 +73,13 @@ def scenarios():
 
 
 @twin_plane_bp.route("/logs", methods=["GET"])
-@require_twin_auth
+@require_twin_or_admin_auth
 def logs():
-    """Retrieve operation logs for the authenticated account."""
+    """Retrieve operation logs. Admin: all logs. Tenant: own logs."""
     limit = request.args.get("limit", 100, type=int)
     offset = request.args.get("offset", 0, type=int)
-    entries = g.storage.list_logs(limit=limit, offset=offset, account_sid=g.account_sid)
+    account_sid = None if g.is_admin else g.account_sid
+    entries = g.storage.list_logs(limit=limit, offset=offset, account_sid=account_sid)
     return jsonify({"logs": entries, "limit": limit, "offset": offset})
 
 
@@ -125,9 +126,13 @@ def create_account():
 
 
 @twin_plane_bp.route("/accounts", methods=["GET"])
-@require_twin_auth
+@require_twin_or_admin_auth
 def list_accounts():
-    """Return the authenticated account's details."""
+    """List accounts. Admin: all accounts (no auth_tokens). Tenant: own account."""
+    if g.is_admin:
+        accounts = g.storage.list_accounts()
+        items = [account_to_json_public(a, g.base_url) for a in accounts]
+        return jsonify({"accounts": items})
     return jsonify({"accounts": [account_to_json(g.account, g.base_url)]})
 
 
@@ -171,19 +176,33 @@ def create_api_key():
 
 
 @twin_plane_bp.route("/emails", methods=["GET"])
-@require_twin_auth
+@require_twin_or_admin_auth
 def list_emails():
-    """List sent emails for the authenticated account."""
-    emails = g.storage.list_emails(g.account_sid)
+    """List emails. Admin: all emails. Tenant: own emails."""
+    if g.is_admin:
+        accounts = g.storage.list_accounts()
+        emails = []
+        for acct in accounts:
+            emails.extend(g.storage.list_emails(acct["sid"]))
+    else:
+        emails = g.storage.list_emails(g.account_sid)
     items = [email_to_json(e) for e in emails]
     return jsonify({"emails": items})
 
 
 @twin_plane_bp.route("/emails/<message_id>", methods=["GET"])
-@require_twin_auth
+@require_twin_or_admin_auth
 def fetch_email(message_id):
-    """Fetch a single email by message_id for the authenticated account."""
-    email = g.storage.get_email(g.account_sid, message_id)
+    """Fetch a single email. Admin: any email. Tenant: own email."""
+    if g.is_admin:
+        accounts = g.storage.list_accounts()
+        email = None
+        for acct in accounts:
+            email = g.storage.get_email(acct["sid"], message_id)
+            if email:
+                break
+    else:
+        email = g.storage.get_email(g.account_sid, message_id)
     if not email:
         return jsonify({"error": "Email not found"}), 404
     return jsonify(email_to_json(email))
@@ -382,32 +401,35 @@ def submit_feedback():
 
 
 @twin_plane_bp.route("/feedback", methods=["GET"])
-@require_twin_auth
+@require_twin_or_admin_auth
 def list_feedback():
-    """List feedback submitted by the authenticated account.
+    """List feedback. Admin: all feedback. Tenant: own feedback.
 
     Optional query params:
         status: Filter by status (pending, reviewed, published).
     """
     status = request.args.get("status")
-    items = g.storage.list_feedback(status=status, account_sid=g.account_sid)
+    account_sid = None if g.is_admin else g.account_sid
+    items = g.storage.list_feedback(status=status, account_sid=account_sid)
     return jsonify({"feedback": items})
 
 
 @twin_plane_bp.route("/feedback/<feedback_id>", methods=["GET"])
-@require_twin_auth
+@require_twin_or_admin_auth
 def get_feedback(feedback_id):
-    """Fetch a single feedback item owned by the authenticated account."""
+    """Fetch a single feedback item. Admin: any. Tenant: own."""
     feedback = g.storage.get_feedback(feedback_id)
-    if not feedback or feedback.get("account_sid") != g.account_sid:
+    if not feedback:
+        return jsonify({"error": "Feedback not found"}), 404
+    if not g.is_admin and feedback.get("account_sid") != g.account_sid:
         return jsonify({"error": "Feedback not found"}), 404
     return jsonify(feedback)
 
 
 @twin_plane_bp.route("/feedback/<feedback_id>", methods=["POST"])
-@require_twin_auth
+@require_twin_or_admin_auth
 def update_feedback(feedback_id):
-    """Update a feedback record owned by the authenticated account.
+    """Update a feedback record. Admin: any. Tenant: own.
 
     Accepts JSON body with:
         status: New status (e.g., "reviewed", "published").
@@ -416,7 +438,9 @@ def update_feedback(feedback_id):
         return jsonify({"error": "JSON body required"}), 400
 
     existing = g.storage.get_feedback(feedback_id)
-    if not existing or existing.get("account_sid") != g.account_sid:
+    if not existing:
+        return jsonify({"error": "Feedback not found"}), 404
+    if not g.is_admin and existing.get("account_sid") != g.account_sid:
         return jsonify({"error": "Feedback not found"}), 404
 
     data = request.json
@@ -429,7 +453,7 @@ def update_feedback(feedback_id):
 
     g.storage.append_log({
         "operation": "twin.feedback.update",
-        "account_sid": g.account_sid,
+        "account_sid": g.account_sid or "admin",
         "feedback_id": feedback_id,
         "status": updates.get("status", ""),
     })

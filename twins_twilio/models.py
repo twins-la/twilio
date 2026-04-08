@@ -40,6 +40,13 @@ def account_to_json(account: dict, base_url: str) -> dict:
     }
 
 
+def account_to_json_public(account: dict, base_url: str) -> dict:
+    """Convert a stored account to JSON without auth_token (for admin listings)."""
+    result = account_to_json(account, base_url)
+    del result["auth_token"]
+    return result
+
+
 def phone_number_to_json(pn: dict, base_url: str) -> dict:
     """Convert a stored phone number to Twilio IncomingPhoneNumber JSON."""
     sid = pn["sid"]

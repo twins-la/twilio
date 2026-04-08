@@ -32,16 +32,19 @@ def create_app(storage: TwinStorage, config: dict | None = None) -> Flask:
     """
     config = config or {}
     base_url = config.get("base_url", "http://localhost:8080")
+    admin_token = config.get("admin_token", "")
 
     app = Flask(__name__)
     app.config["TWIN_STORAGE"] = storage
     app.config["TWIN_BASE_URL"] = base_url
+    app.config["TWIN_ADMIN_TOKEN"] = admin_token
 
     @app.before_request
     def inject_storage():
         """Make storage and config available to all request handlers."""
         g.storage = app.config["TWIN_STORAGE"]
         g.base_url = app.config["TWIN_BASE_URL"]
+        g.admin_token = app.config["TWIN_ADMIN_TOKEN"]
 
     # Register Twilio API routes
     app.register_blueprint(accounts_bp)
