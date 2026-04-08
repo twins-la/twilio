@@ -17,7 +17,7 @@ See [SCENARIOS.md](SCENARIOS.md) for the full scope and authoritative references
 This package is not run directly. It is loaded by a host:
 
 - **Local**: [twins-local](https://github.com/twins-la/local) — run locally with Docker Compose
-- **Cloud**: [twins-cloud](https://github.com/twins-la/cloud) — deployed to Azure
+- **Cloud**: available at [twilio.twins.la](https://twilio.twins.la)
 
 ## Quick Start (with local host)
 
