@@ -181,10 +181,14 @@ EXPLAINER_HTML = """\
         .links a { margin-right: 1.5rem; font-size: 0.9rem; }
         footer { margin-top: 3rem; color: #6b7280; font-size: 0.8rem; }
         footer .dot { color: #e11d48; }
+        .breadcrumb { margin-bottom: 0.5rem; font-size: 0.85rem; }
+        .breadcrumb a { color: #0e7490; }
+        .breadcrumb a:hover { color: #1a2e4a; }
     </style>
 </head>
 <body>
     <main>
+        <p class="breadcrumb"><a href="https://twins.la">twins.la</a></p>
         <h1><span class="twilio">twilio</span>.twins.la</h1>
         <p class="tagline">A digital twin of the Twilio SMS and SendGrid Email APIs.</p>
 
