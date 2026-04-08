@@ -93,6 +93,7 @@ EXPLAINER_HTML = """\
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>twilio.twins.la — Twilio &amp; SendGrid Twin</title>
+    <link rel="icon" type="image/png" href="https://twins.la/twins.png">
     <style>
         @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600&family=JetBrains+Mono:wght@400&display=swap');
         * { margin: 0; padding: 0; box-sizing: border-box; }
@@ -109,12 +110,10 @@ EXPLAINER_HTML = """\
             font-size: clamp(2rem, 5vw, 3rem);
             font-weight: 600;
             letter-spacing: -0.03em;
-            background: linear-gradient(135deg, #111827 0%, #6b7280 100%);
-            -webkit-background-clip: text;
-            -webkit-text-fill-color: transparent;
-            background-clip: text;
+            color: #1a2e4a;
             margin-bottom: 0.5rem;
         }
+        h1 .twilio { color: #e11d48; }
         .tagline {
             font-size: 1.1rem;
             color: #6b7280;
@@ -124,24 +123,24 @@ EXPLAINER_HTML = """\
         h2 {
             font-size: 1.25rem;
             font-weight: 600;
-            color: #111827;
+            color: #1a2e4a;
             margin: 2rem 0 0.75rem;
             letter-spacing: -0.01em;
         }
         p { margin-bottom: 1rem; color: #6b7280; }
-        p strong { color: #374151; }
-        a { color: #2563eb; text-decoration: none; }
-        a:hover { text-decoration: underline; }
+        p strong { color: #1a2e4a; }
+        a { color: #e11d48; text-decoration: none; }
+        a:hover { color: #c8253a; text-decoration: underline; }
         ul { list-style: none; padding: 0; margin-bottom: 1rem; }
         ul li { padding: 0.3rem 0; color: #6b7280; }
-        ul li::before { content: "→ "; color: #d1d5db; }
+        ul li::before { content: "→ "; color: #e11d48; }
         code {
             font-family: 'JetBrains Mono', monospace;
             font-size: 0.85em;
             background: #f3f4f6;
             padding: 0.15em 0.4em;
             border-radius: 4px;
-            color: #374151;
+            color: #1a2e4a;
             border: 1px solid #e5e7eb;
         }
         .snippet-box {
@@ -177,15 +176,16 @@ EXPLAINER_HTML = """\
             font-family: 'Inter', sans-serif;
             transition: background 0.15s, color 0.15s;
         }
-        .copy-btn:hover { background: #e5e7eb; color: #374151; }
+        .copy-btn:hover { background: #1a2e4a; color: #ffffff; }
         .links { margin-top: 2.5rem; padding-top: 1.5rem; border-top: 1px solid #e5e7eb; }
         .links a { margin-right: 1.5rem; font-size: 0.9rem; }
         footer { margin-top: 3rem; color: #6b7280; font-size: 0.8rem; }
+        footer .dot { color: #e11d48; }
     </style>
 </head>
 <body>
     <main>
-        <h1>twilio.twins.la</h1>
+        <h1><span class="twilio">twilio</span>.twins.la</h1>
         <p class="tagline">A digital twin of the Twilio SMS and SendGrid Email APIs.</p>
 
         <h2>What is this?</h2>
@@ -235,7 +235,7 @@ EXPLAINER_HTML = """\
             <a href="/_twin/scenarios">Scenarios</a>
         </div>
 
-        <footer>twins.la — Where agents meet their environment.</footer>
+        <footer>twins.la <span class="dot">·</span> Where agents meet their environment.</footer>
     </main>
 </body>
 </html>
