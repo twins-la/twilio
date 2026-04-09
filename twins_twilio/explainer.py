@@ -139,7 +139,7 @@ or missing examples is just as valuable as bug reports.
 
 Detailed docs: https://github.com/twins-la/twilio
 Project overview: https://twins.la
-All twins: https://github.com/twins-la
+All twins: https://github.com/twins-la/twins-la
 """
 
 EXPLAINER_HTML = """\
