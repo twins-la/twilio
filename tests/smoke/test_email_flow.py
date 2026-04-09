@@ -59,8 +59,23 @@ def api_key(client, account, auth_headers):
 
 
 @pytest.fixture
-def email_auth_headers(api_key):
-    """Authorization headers for SendGrid-style API key auth."""
+def verified_sender(client, account, auth_headers):
+    """Register sender@example.com as a verified sender for the test account."""
+    resp = client.post("/_twin/verified-senders",
+        headers=auth_headers,
+        json={"email": "sender@example.com"},
+    )
+    assert resp.status_code == 201
+    return resp.get_json()
+
+
+@pytest.fixture
+def email_auth_headers(api_key, verified_sender):
+    """Authorization headers for SendGrid-style API key auth.
+
+    Depends on verified_sender to ensure the test account has a verified
+    sender registered before any email send attempts.
+    """
     return {"Authorization": f"Bearer {api_key['api_key']}"}
 
 
@@ -517,3 +532,118 @@ class TestEmailSIDFormats:
         from twins_twilio.sids import generate_email_id
         email_id = generate_email_id()
         assert len(email_id) == 22
+
+
+class TestVerifiedSenderManagement:
+    """Test verified sender management via Twin Plane."""
+
+    def test_create_verified_sender(self, client, account, auth_headers):
+        resp = client.post("/_twin/verified-senders",
+            headers=auth_headers,
+            json={"email": "newsender@example.com", "name": "New Sender"},
+        )
+        assert resp.status_code == 201
+        data = resp.get_json()
+        assert data["email"] == "newsender@example.com"
+        assert data["name"] == "New Sender"
+        assert data["account_sid"] == account["sid"]
+
+    def test_list_verified_senders(self, client, account, auth_headers):
+        client.post("/_twin/verified-senders",
+            headers=auth_headers,
+            json={"email": "listed@example.com"},
+        )
+        resp = client.get("/_twin/verified-senders", headers=auth_headers)
+        assert resp.status_code == 200
+        data = resp.get_json()
+        emails = [s["email"] for s in data["verified_senders"]]
+        assert "listed@example.com" in emails
+
+    def test_duplicate_verified_sender_is_idempotent(self, client, account, auth_headers):
+        """Registering the same email twice is idempotent (INSERT OR IGNORE)."""
+        resp1 = client.post("/_twin/verified-senders",
+            headers=auth_headers,
+            json={"email": "dup@example.com"},
+        )
+        assert resp1.status_code == 201
+        resp2 = client.post("/_twin/verified-senders",
+            headers=auth_headers,
+            json={"email": "dup@example.com"},
+        )
+        assert resp2.status_code == 201
+        assert resp1.get_json()["email"] == resp2.get_json()["email"]
+
+
+class TestSenderVerification:
+    """Test that mail/send enforces sender identity verification."""
+
+    def test_unverified_sender_returns_403(self, client, api_key):
+        """Sending from an unregistered address returns 403 with SendGrid error format."""
+        headers = {"Authorization": f"Bearer {api_key['api_key']}"}
+        resp = client.post(
+            "/v3/mail/send",
+            json={
+                "personalizations": [
+                    {"to": [{"email": "recipient@example.com"}]}
+                ],
+                "from": {"email": "unverified@example.com"},
+                "subject": "Should fail",
+                "content": [{"type": "text/plain", "value": "Test."}],
+            },
+            headers=headers,
+        )
+        assert resp.status_code == 403
+        data = resp.get_json()
+        assert "errors" in data
+        assert data["errors"][0]["field"] == "from"
+        assert "verified Sender Identity" in data["errors"][0]["message"]
+
+    def test_cross_account_sender_isolation(self, client):
+        """Account A's verified sender does not authorize account B."""
+        import base64
+
+        # Create account A and register a verified sender
+        acct_a = client.post("/_twin/accounts",
+            json={"friendly_name": "Account A"},
+        ).get_json()
+        creds_a = base64.b64encode(
+            f"{acct_a['sid']}:{acct_a['auth_token']}".encode()
+        ).decode()
+        headers_a = {"Authorization": f"Basic {creds_a}"}
+
+        client.post("/_twin/verified-senders",
+            headers=headers_a,
+            json={"email": "shared@example.com"},
+        )
+
+        # Create account B with API key but no verified sender
+        acct_b = client.post("/_twin/accounts",
+            json={"friendly_name": "Account B"},
+        ).get_json()
+        creds_b = base64.b64encode(
+            f"{acct_b['sid']}:{acct_b['auth_token']}".encode()
+        ).decode()
+        headers_b = {"Authorization": f"Basic {creds_b}"}
+
+        key_b = client.post("/_twin/api-keys",
+            headers=headers_b,
+            json={"name": "Key B"},
+        ).get_json()
+
+        # Account B tries to send from the same address — should get 403
+        resp = client.post(
+            "/v3/mail/send",
+            json={
+                "personalizations": [
+                    {"to": [{"email": "recipient@example.com"}]}
+                ],
+                "from": {"email": "shared@example.com"},
+                "subject": "Cross-account test",
+                "content": [{"type": "text/plain", "value": "Test."}],
+            },
+            headers={"Authorization": f"Bearer {key_b['api_key']}"},
+        )
+        assert resp.status_code == 403
+        data = resp.get_json()
+        assert data["errors"][0]["field"] == "from"
+        assert "verified Sender Identity" in data["errors"][0]["message"]
