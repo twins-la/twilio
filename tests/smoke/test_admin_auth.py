@@ -10,30 +10,48 @@ Exercises the admin auth model:
 """
 
 import base64
+import os
+import sys
 
 import pytest
 
 from twins_twilio.app import create_app
 
-import sys
-import os
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", ".."))
 
 from twins_twilio_local.storage_sqlite import SQLiteStorage
+from twins_local.tenants import (
+    SQLiteTenantStore,
+    ensure_default_tenant,
+    generate_tenant_id,
+    generate_tenant_secret,
+    hash_secret,
+)
 
 
 ADMIN_TOKEN = "test-admin-secret-token"
 
 
 @pytest.fixture
-def admin_app(tmp_path):
-    """Create a twin app with admin token configured."""
+def admin_tenant_store(tmp_path):
+    store = SQLiteTenantStore(db_path=str(tmp_path / "admin_tenants.sqlite3"))
+    ensure_default_tenant(store)
+    return store
+
+
+@pytest.fixture
+def admin_app(tmp_path, admin_tenant_store):
+    """Twin app with an admin token configured."""
     db_path = str(tmp_path / "admin_test.db")
     storage = SQLiteStorage(db_path=db_path)
-    app = create_app(storage=storage, config={
-        "base_url": "http://localhost:8080",
-        "admin_token": ADMIN_TOKEN,
-    })
+    app = create_app(
+        storage=storage,
+        tenants=admin_tenant_store,
+        config={
+            "base_url": "http://localhost:8080",
+            "admin_token": ADMIN_TOKEN,
+        },
+    )
     app.config["TESTING"] = True
     return app
 
@@ -48,66 +66,79 @@ def admin_headers():
     return {"Authorization": f"Bearer {ADMIN_TOKEN}"}
 
 
-@pytest.fixture
-def two_accounts(admin_client):
-    """Create two accounts and return their details + auth headers."""
-    resp_a = admin_client.post("/_twin/accounts", json={"friendly_name": "Account A"})
-    acct_a = resp_a.get_json()
-    headers_a = {"Authorization": f"Basic {base64.b64encode(f'{acct_a['sid']}:{acct_a['auth_token']}'.encode()).decode()}"}
+def _make_tenant(store, name):
+    tid = generate_tenant_id()
+    secret = generate_tenant_secret()
+    store.create_tenant(tid, hash_secret(secret), name)
+    creds = base64.b64encode(f"{tid}:{secret}".encode()).decode()
+    return tid, {"Authorization": f"Basic {creds}"}
 
-    resp_b = admin_client.post("/_twin/accounts", json={"friendly_name": "Account B"})
+
+@pytest.fixture
+def two_tenants(admin_client, admin_tenant_store):
+    """Create two tenants, each with one account, and return details + headers."""
+    tid_a, headers_a = _make_tenant(admin_tenant_store, "Tenant A")
+    tid_b, headers_b = _make_tenant(admin_tenant_store, "Tenant B")
+
+    resp_a = admin_client.post(
+        "/_twin/accounts", headers=headers_a, json={"friendly_name": "Account A"}
+    )
+    acct_a = resp_a.get_json()
+
+    resp_b = admin_client.post(
+        "/_twin/accounts", headers=headers_b, json={"friendly_name": "Account B"}
+    )
     acct_b = resp_b.get_json()
-    headers_b = {"Authorization": f"Basic {base64.b64encode(f'{acct_b['sid']}:{acct_b['auth_token']}'.encode()).decode()}"}
 
     return {
-        "a": acct_a, "headers_a": headers_a,
-        "b": acct_b, "headers_b": headers_b,
+        "tid_a": tid_a, "a": acct_a, "headers_a": headers_a,
+        "tid_b": tid_b, "b": acct_b, "headers_b": headers_b,
     }
 
 
 class TestAdminAccountAccess:
-    """Test admin access to accounts."""
+    """Test admin access to accounts across tenants."""
 
-    def test_admin_lists_all_accounts(self, admin_client, admin_headers, two_accounts):
+    def test_admin_lists_all_accounts(self, admin_client, admin_headers, two_tenants):
         resp = admin_client.get("/_twin/accounts", headers=admin_headers)
         assert resp.status_code == 200
         accounts = resp.get_json()["accounts"]
         assert len(accounts) == 2
         sids = {a["sid"] for a in accounts}
-        assert two_accounts["a"]["sid"] in sids
-        assert two_accounts["b"]["sid"] in sids
+        assert two_tenants["a"]["sid"] in sids
+        assert two_tenants["b"]["sid"] in sids
 
-    def test_admin_list_omits_auth_tokens(self, admin_client, admin_headers, two_accounts):
+    def test_admin_list_omits_auth_tokens(self, admin_client, admin_headers, two_tenants):
         resp = admin_client.get("/_twin/accounts", headers=admin_headers)
         accounts = resp.get_json()["accounts"]
         for account in accounts:
             assert "auth_token" not in account
 
-    def test_tenant_still_sees_own_account_only(self, admin_client, two_accounts):
-        resp = admin_client.get("/_twin/accounts", headers=two_accounts["headers_a"])
+    def test_tenant_sees_only_own_accounts(self, admin_client, two_tenants):
+        resp = admin_client.get("/_twin/accounts", headers=two_tenants["headers_a"])
         assert resp.status_code == 200
         accounts = resp.get_json()["accounts"]
         assert len(accounts) == 1
-        assert accounts[0]["sid"] == two_accounts["a"]["sid"]
-        # Tenant sees their own auth_token
+        assert accounts[0]["sid"] == two_tenants["a"]["sid"]
+        # Tenant sees their account's auth_token
         assert "auth_token" in accounts[0]
 
 
 class TestAdminFeedbackAccess:
-    """Test admin access to feedback."""
+    """Test admin access to feedback across tenants."""
 
-    def test_admin_lists_all_feedback(self, admin_client, admin_headers, two_accounts):
-        # Each account submits feedback
-        admin_client.post("/_twin/feedback",
-            headers=two_accounts["headers_a"],
+    def test_admin_lists_all_feedback(self, admin_client, admin_headers, two_tenants):
+        admin_client.post(
+            "/_twin/feedback",
+            headers=two_tenants["headers_a"],
             json={"body": "Feedback from A"},
         )
-        admin_client.post("/_twin/feedback",
-            headers=two_accounts["headers_b"],
+        admin_client.post(
+            "/_twin/feedback",
+            headers=two_tenants["headers_b"],
             json={"body": "Feedback from B"},
         )
 
-        # Admin sees both
         resp = admin_client.get("/_twin/feedback", headers=admin_headers)
         assert resp.status_code == 200
         items = resp.get_json()["feedback"]
@@ -116,73 +147,75 @@ class TestAdminFeedbackAccess:
         assert "Feedback from A" in bodies
         assert "Feedback from B" in bodies
 
-    def test_admin_reads_any_feedback(self, admin_client, admin_headers, two_accounts):
-        r = admin_client.post("/_twin/feedback",
-            headers=two_accounts["headers_a"],
+    def test_admin_reads_any_feedback(self, admin_client, admin_headers, two_tenants):
+        r = admin_client.post(
+            "/_twin/feedback",
+            headers=two_tenants["headers_a"],
             json={"body": "A's private feedback"},
         )
         fb_id = r.get_json()["id"]
 
-        # Admin can read it
         resp = admin_client.get(f"/_twin/feedback/{fb_id}", headers=admin_headers)
         assert resp.status_code == 200
         assert resp.get_json()["body"] == "A's private feedback"
 
-    def test_admin_updates_any_feedback(self, admin_client, admin_headers, two_accounts):
-        r = admin_client.post("/_twin/feedback",
-            headers=two_accounts["headers_a"],
+    def test_admin_updates_any_feedback(self, admin_client, admin_headers, two_tenants):
+        r = admin_client.post(
+            "/_twin/feedback",
+            headers=two_tenants["headers_a"],
             json={"body": "Needs review"},
         )
         fb_id = r.get_json()["id"]
 
-        # Admin marks as reviewed
-        resp = admin_client.post(f"/_twin/feedback/{fb_id}",
+        resp = admin_client.post(
+            f"/_twin/feedback/{fb_id}",
             headers=admin_headers,
             json={"status": "reviewed"},
         )
         assert resp.status_code == 200
         assert resp.get_json()["status"] == "reviewed"
 
-    def test_tenant_cannot_see_others_feedback(self, admin_client, two_accounts):
-        r = admin_client.post("/_twin/feedback",
-            headers=two_accounts["headers_a"],
+    def test_tenant_cannot_see_others_feedback(self, admin_client, two_tenants):
+        r = admin_client.post(
+            "/_twin/feedback",
+            headers=two_tenants["headers_a"],
             json={"body": "A only"},
         )
         fb_id = r.get_json()["id"]
 
-        # B cannot see A's feedback
-        resp = admin_client.get(f"/_twin/feedback/{fb_id}", headers=two_accounts["headers_b"])
+        resp = admin_client.get(
+            f"/_twin/feedback/{fb_id}", headers=two_tenants["headers_b"]
+        )
         assert resp.status_code == 404
 
 
 class TestAdminLogAccess:
-    """Test admin access to logs."""
+    """Test admin access to logs across tenants."""
 
-    def test_admin_sees_all_logs(self, admin_client, admin_headers, two_accounts):
-        # Both accounts generate activity
-        admin_client.post("/_twin/feedback",
-            headers=two_accounts["headers_a"],
+    def test_admin_sees_all_logs(self, admin_client, admin_headers, two_tenants):
+        admin_client.post(
+            "/_twin/feedback",
+            headers=two_tenants["headers_a"],
             json={"body": "A log activity"},
         )
-        admin_client.post("/_twin/feedback",
-            headers=two_accounts["headers_b"],
+        admin_client.post(
+            "/_twin/feedback",
+            headers=two_tenants["headers_b"],
             json={"body": "B log activity"},
         )
 
         resp = admin_client.get("/_twin/logs", headers=admin_headers)
         assert resp.status_code == 200
         logs = resp.get_json()["logs"]
-        account_sids = {l["entry"].get("account_sid") for l in logs}
-        assert two_accounts["a"]["sid"] in account_sids
-        assert two_accounts["b"]["sid"] in account_sids
+        tenant_ids = {l["entry"].get("tenant_id") for l in logs}
+        assert two_tenants["tid_a"] in tenant_ids
+        assert two_tenants["tid_b"] in tenant_ids
 
 
 class TestAdminEmailAccess:
     """Test admin access to emails."""
 
-    def test_admin_sees_all_emails(self, admin_client, admin_headers, two_accounts):
-        # We can't easily send emails without the full SendGrid flow,
-        # but we can verify the endpoint accepts admin auth
+    def test_admin_sees_all_emails(self, admin_client, admin_headers, two_tenants):
         resp = admin_client.get("/_twin/emails", headers=admin_headers)
         assert resp.status_code == 200
         assert "emails" in resp.get_json()
@@ -192,8 +225,8 @@ class TestAdminAuthEnforcement:
     """Test admin auth validation."""
 
     def test_wrong_admin_token_returns_401(self, admin_client):
-        resp = admin_client.get("/_twin/accounts",
-            headers={"Authorization": "Bearer wrong-token"},
+        resp = admin_client.get(
+            "/_twin/accounts", headers={"Authorization": "Bearer wrong-token"}
         )
         assert resp.status_code == 401
 
@@ -207,7 +240,8 @@ class TestAdminAuthEnforcement:
         assert admin_client.get("/_twin/settings").status_code == 200
         assert admin_client.get("/_twin/agent-instructions").status_code == 200
         assert admin_client.get("/").status_code == 200
-        assert admin_client.post("/_twin/accounts", json={}).status_code == 201
+        # POST /_twin/tenants is unauthenticated bootstrap
+        assert admin_client.post("/_twin/tenants", json={}).status_code == 201
 
 
 class TestNoAdminTokenConfigured:
@@ -215,14 +249,13 @@ class TestNoAdminTokenConfigured:
 
     def test_any_bearer_token_accepted(self, client):
         """With no admin token configured, any Bearer token works as admin."""
-        # client fixture has no admin_token configured
-        resp = client.get("/_twin/accounts",
-            headers={"Authorization": "Bearer anything"},
+        resp = client.get(
+            "/_twin/accounts", headers={"Authorization": "Bearer anything"}
         )
         assert resp.status_code == 200
 
-    def test_tenant_auth_still_works(self, client, account, auth_headers):
+    def test_tenant_auth_still_works(self, client, account, tenant_headers):
         """Tenant auth works regardless of admin token config."""
-        resp = client.get("/_twin/accounts", headers=auth_headers)
+        resp = client.get("/_twin/accounts", headers=tenant_headers)
         assert resp.status_code == 200
         assert resp.get_json()["accounts"][0]["sid"] == account["sid"]

@@ -2,6 +2,11 @@
 
 Provides persistent storage for the Twilio twin using SQLite.
 The database file is stored at a configurable path, defaulting to ./data/twin.db.
+
+Every resource table carries a ``tenant_id`` column. Lookups filter by
+``tenant_id`` where the Twin Plane scope applies; account-scoped methods
+additionally enforce (tenant_id, account_sid) via the account's own
+tenant_id column.
 """
 
 import json
@@ -58,6 +63,7 @@ class SQLiteStorage(TwinStorage):
                 conn.executescript("""
                     CREATE TABLE IF NOT EXISTS accounts (
                         sid TEXT PRIMARY KEY,
+                        tenant_id TEXT NOT NULL,
                         auth_token TEXT NOT NULL,
                         friendly_name TEXT NOT NULL DEFAULT '',
                         status TEXT NOT NULL DEFAULT 'active',
@@ -65,8 +71,12 @@ class SQLiteStorage(TwinStorage):
                         date_updated TEXT NOT NULL
                     );
 
+                    CREATE INDEX IF NOT EXISTS idx_accounts_tenant
+                        ON accounts(tenant_id);
+
                     CREATE TABLE IF NOT EXISTS phone_numbers (
                         sid TEXT PRIMARY KEY,
+                        tenant_id TEXT NOT NULL,
                         account_sid TEXT NOT NULL,
                         phone_number TEXT NOT NULL,
                         friendly_name TEXT NOT NULL DEFAULT '',
@@ -94,6 +104,7 @@ class SQLiteStorage(TwinStorage):
 
                     CREATE TABLE IF NOT EXISTS messages (
                         sid TEXT PRIMARY KEY,
+                        tenant_id TEXT NOT NULL,
                         account_sid TEXT NOT NULL,
                         "to" TEXT NOT NULL DEFAULT '',
                         from_number TEXT NOT NULL DEFAULT '',
@@ -118,6 +129,7 @@ class SQLiteStorage(TwinStorage):
 
                     CREATE TABLE IF NOT EXISTS api_keys (
                         key_id TEXT PRIMARY KEY,
+                        tenant_id TEXT NOT NULL,
                         key_secret TEXT NOT NULL,
                         account_sid TEXT NOT NULL,
                         name TEXT NOT NULL DEFAULT '',
@@ -130,6 +142,7 @@ class SQLiteStorage(TwinStorage):
 
                     CREATE TABLE IF NOT EXISTS emails (
                         message_id TEXT PRIMARY KEY,
+                        tenant_id TEXT NOT NULL,
                         account_sid TEXT NOT NULL,
                         from_email TEXT NOT NULL DEFAULT '',
                         from_name TEXT NOT NULL DEFAULT '',
@@ -149,18 +162,18 @@ class SQLiteStorage(TwinStorage):
                         id INTEGER PRIMARY KEY AUTOINCREMENT,
                         timestamp TEXT NOT NULL,
                         entry TEXT NOT NULL,
-                        account_sid TEXT NOT NULL DEFAULT ''
+                        tenant_id TEXT NOT NULL DEFAULT ''
                     );
 
-                    CREATE INDEX IF NOT EXISTS idx_logs_account
-                        ON logs(account_sid);
+                    CREATE INDEX IF NOT EXISTS idx_logs_tenant
+                        ON logs(tenant_id);
 
                     CREATE TABLE IF NOT EXISTS feedback (
                         id TEXT PRIMARY KEY,
+                        tenant_id TEXT NOT NULL DEFAULT '',
                         body TEXT NOT NULL,
                         category TEXT NOT NULL DEFAULT '',
                         context TEXT NOT NULL DEFAULT '{}',
-                        account_sid TEXT NOT NULL DEFAULT '',
                         status TEXT NOT NULL DEFAULT 'pending',
                         date_created TEXT NOT NULL,
                         date_updated TEXT NOT NULL
@@ -168,9 +181,12 @@ class SQLiteStorage(TwinStorage):
 
                     CREATE INDEX IF NOT EXISTS idx_feedback_status
                         ON feedback(status);
+                    CREATE INDEX IF NOT EXISTS idx_feedback_tenant
+                        ON feedback(tenant_id);
 
                     CREATE TABLE IF NOT EXISTS verified_senders (
                         id INTEGER PRIMARY KEY AUTOINCREMENT,
+                        tenant_id TEXT NOT NULL,
                         account_sid TEXT NOT NULL,
                         email TEXT NOT NULL,
                         name TEXT NOT NULL DEFAULT '',
@@ -183,14 +199,6 @@ class SQLiteStorage(TwinStorage):
                         ON verified_senders(account_sid);
                 """)
                 conn.commit()
-                # Migration: add account_sid column to logs if it doesn't exist
-                # (CREATE TABLE IF NOT EXISTS won't alter existing tables)
-                try:
-                    conn.execute("ALTER TABLE logs ADD COLUMN account_sid TEXT NOT NULL DEFAULT ''")
-                    conn.execute("CREATE INDEX IF NOT EXISTS idx_logs_account ON logs(account_sid)")
-                    conn.commit()
-                except sqlite3.OperationalError:
-                    pass  # Column already exists
             finally:
                 conn.close()
 
@@ -199,15 +207,22 @@ class SQLiteStorage(TwinStorage):
 
     # -- Accounts --
 
-    def create_account(self, sid: str, auth_token: str, friendly_name: str) -> dict:
+    def create_account(
+        self,
+        tenant_id: str,
+        sid: str,
+        auth_token: str,
+        friendly_name: str,
+    ) -> dict:
         now = datetime.now(timezone.utc).isoformat()
         with self._lock:
             conn = self._get_conn()
             try:
                 conn.execute(
-                    "INSERT INTO accounts (sid, auth_token, friendly_name, date_created, date_updated) "
-                    "VALUES (?, ?, ?, ?, ?)",
-                    (sid, auth_token, friendly_name, now, now),
+                    "INSERT INTO accounts (sid, tenant_id, auth_token, friendly_name,"
+                    " date_created, date_updated)"
+                    " VALUES (?, ?, ?, ?, ?, ?)",
+                    (sid, tenant_id, auth_token, friendly_name, now, now),
                 )
                 conn.commit()
                 row = conn.execute("SELECT * FROM accounts WHERE sid = ?", (sid,)).fetchone()
@@ -223,10 +238,16 @@ class SQLiteStorage(TwinStorage):
         finally:
             conn.close()
 
-    def list_accounts(self) -> list[dict]:
+    def list_accounts(self, tenant_id: Optional[str] = None) -> list[dict]:
         conn = self._get_conn()
         try:
-            rows = conn.execute("SELECT * FROM accounts ORDER BY date_created").fetchall()
+            if tenant_id is None:
+                rows = conn.execute("SELECT * FROM accounts ORDER BY date_created").fetchall()
+            else:
+                rows = conn.execute(
+                    "SELECT * FROM accounts WHERE tenant_id = ? ORDER BY date_created",
+                    (tenant_id,),
+                ).fetchall()
             return [self._row_to_dict(r) for r in rows]
         finally:
             conn.close()
@@ -235,7 +256,7 @@ class SQLiteStorage(TwinStorage):
 
     def create_phone_number(self, data: dict) -> dict:
         cols = [
-            "sid", "account_sid", "phone_number", "friendly_name",
+            "sid", "tenant_id", "account_sid", "phone_number", "friendly_name",
             "sms_url", "sms_method", "sms_fallback_url", "sms_fallback_method",
             "sms_application_sid", "voice_url", "voice_method",
             "voice_fallback_url", "voice_fallback_method", "voice_application_sid",
@@ -295,7 +316,6 @@ class SQLiteStorage(TwinStorage):
         if not updates:
             return self.get_phone_number(account_sid, sid)
 
-        # Whitelist column names to prevent SQL injection
         safe_updates = {k: v for k, v in updates.items() if k in _VALID_PHONE_NUMBER_COLUMNS}
         if not safe_updates:
             return self.get_phone_number(account_sid, sid)
@@ -323,13 +343,13 @@ class SQLiteStorage(TwinStorage):
 
     def create_message(self, data: dict) -> dict:
         cols = [
-            "sid", "account_sid", '"to"', "from_number", "body", "status",
+            "sid", "tenant_id", "account_sid", '"to"', "from_number", "body", "status",
             "direction", "date_created", "date_updated", "date_sent",
             "num_segments", "price", "error_code", "error_message",
             "messaging_service_sid", "status_callback", "status_callback_method",
         ]
         keys = [
-            "sid", "account_sid", "to", "from_number", "body", "status",
+            "sid", "tenant_id", "account_sid", "to", "from_number", "body", "status",
             "direction", "date_created", "date_updated", "date_sent",
             "num_segments", "price", "error_code", "error_message",
             "messaging_service_sid", "status_callback", "status_callback_method",
@@ -385,7 +405,6 @@ class SQLiteStorage(TwinStorage):
         if not updates:
             return self.get_message(account_sid, sid)
 
-        # Whitelist column names to prevent SQL injection
         safe_updates = {k: v for k, v in updates.items() if k in _VALID_MESSAGE_COLUMNS}
         if not safe_updates:
             return self.get_message(account_sid, sid)
@@ -411,15 +430,22 @@ class SQLiteStorage(TwinStorage):
 
     # -- API Keys --
 
-    def create_api_key(self, key_id: str, key_secret: str, account_sid: str, name: str) -> dict:
+    def create_api_key(
+        self,
+        tenant_id: str,
+        key_id: str,
+        key_secret: str,
+        account_sid: str,
+        name: str,
+    ) -> dict:
         now = datetime.now(timezone.utc).isoformat()
         with self._lock:
             conn = self._get_conn()
             try:
                 conn.execute(
-                    "INSERT INTO api_keys (key_id, key_secret, account_sid, name, date_created) "
-                    "VALUES (?, ?, ?, ?, ?)",
-                    (key_id, key_secret, account_sid, name, now),
+                    "INSERT INTO api_keys (key_id, tenant_id, key_secret, account_sid, name, date_created) "
+                    "VALUES (?, ?, ?, ?, ?, ?)",
+                    (key_id, tenant_id, key_secret, account_sid, name, now),
                 )
                 conn.commit()
                 row = conn.execute("SELECT * FROM api_keys WHERE key_id = ?", (key_id,)).fetchone()
@@ -450,7 +476,7 @@ class SQLiteStorage(TwinStorage):
 
     def create_email(self, data: dict) -> dict:
         cols = [
-            "message_id", "account_sid", "from_email", "from_name",
+            "message_id", "tenant_id", "account_sid", "from_email", "from_name",
             "subject", "personalizations", "content", "status",
             "date_created", "date_updated",
         ]
@@ -535,7 +561,7 @@ class SQLiteStorage(TwinStorage):
 
     def create_feedback(self, data: dict) -> dict:
         cols = [
-            "id", "body", "category", "context", "account_sid",
+            "id", "tenant_id", "body", "category", "context",
             "status", "date_created", "date_updated",
         ]
         values = []
@@ -571,7 +597,11 @@ class SQLiteStorage(TwinStorage):
         finally:
             conn.close()
 
-    def list_feedback(self, status: Optional[str] = None, account_sid: Optional[str] = None) -> list[dict]:
+    def list_feedback(
+        self,
+        status: Optional[str] = None,
+        tenant_id: Optional[str] = None,
+    ) -> list[dict]:
         conn = self._get_conn()
         try:
             query = "SELECT * FROM feedback WHERE 1=1"
@@ -579,9 +609,9 @@ class SQLiteStorage(TwinStorage):
             if status:
                 query += " AND status = ?"
                 params.append(status)
-            if account_sid:
-                query += " AND account_sid = ?"
-                params.append(account_sid)
+            if tenant_id is not None:
+                query += " AND tenant_id = ?"
+                params.append(tenant_id)
             query += " ORDER BY date_created DESC"
             rows = conn.execute(query, params).fetchall()
             result = []
@@ -618,15 +648,21 @@ class SQLiteStorage(TwinStorage):
 
     # -- Verified Senders --
 
-    def create_verified_sender(self, account_sid: str, email: str, name: str = "") -> dict:
+    def create_verified_sender(
+        self,
+        tenant_id: str,
+        account_sid: str,
+        email: str,
+        name: str = "",
+    ) -> dict:
         now = datetime.now(timezone.utc).isoformat()
         with self._lock:
             conn = self._get_conn()
             try:
                 conn.execute(
-                    "INSERT OR IGNORE INTO verified_senders (account_sid, email, name, date_created) "
-                    "VALUES (?, ?, ?, ?)",
-                    (account_sid, email, name, now),
+                    "INSERT OR IGNORE INTO verified_senders (tenant_id, account_sid, email, name, date_created) "
+                    "VALUES (?, ?, ?, ?, ?)",
+                    (tenant_id, account_sid, email, name, now),
                 )
                 conn.commit()
                 row = conn.execute(
@@ -663,25 +699,30 @@ class SQLiteStorage(TwinStorage):
 
     def append_log(self, entry: dict) -> None:
         now = datetime.now(timezone.utc).isoformat()
-        account_sid = entry.get("account_sid", "")
+        tenant_id = entry.get("tenant_id", "")
         with self._lock:
             conn = self._get_conn()
             try:
                 conn.execute(
-                    "INSERT INTO logs (timestamp, entry, account_sid) VALUES (?, ?, ?)",
-                    (now, json.dumps(entry), account_sid),
+                    "INSERT INTO logs (timestamp, entry, tenant_id) VALUES (?, ?, ?)",
+                    (now, json.dumps(entry), tenant_id),
                 )
                 conn.commit()
             finally:
                 conn.close()
 
-    def list_logs(self, limit: int = 100, offset: int = 0, account_sid: Optional[str] = None) -> list[dict]:
+    def list_logs(
+        self,
+        limit: int = 100,
+        offset: int = 0,
+        tenant_id: Optional[str] = None,
+    ) -> list[dict]:
         conn = self._get_conn()
         try:
-            if account_sid:
+            if tenant_id is not None:
                 rows = conn.execute(
-                    "SELECT * FROM logs WHERE account_sid = ? ORDER BY id DESC LIMIT ? OFFSET ?",
-                    (account_sid, limit, offset),
+                    "SELECT * FROM logs WHERE tenant_id = ? ORDER BY id DESC LIMIT ? OFFSET ?",
+                    (tenant_id, limit, offset),
                 ).fetchall()
             else:
                 rows = conn.execute(

@@ -18,8 +18,8 @@ import pytest
 class TestAccountCreation:
     """Test account management via Twin Plane."""
 
-    def test_create_account(self, client):
-        resp = client.post("/_twin/accounts", json={"friendly_name": "My Account"})
+    def test_create_account(self, client, tenant_headers):
+        resp = client.post("/_twin/accounts", headers=tenant_headers, json={"friendly_name": "My Account"})
         assert resp.status_code == 201
         data = resp.get_json()
         assert data["sid"].startswith("AC")
@@ -29,8 +29,8 @@ class TestAccountCreation:
         assert data["status"] == "active"
         assert data["type"] == "Full"
 
-    def test_list_accounts(self, client, account, auth_headers):
-        resp = client.get("/_twin/accounts", headers=auth_headers)
+    def test_list_accounts(self, client, account, auth_headers, tenant_headers):
+        resp = client.get("/_twin/accounts", headers=tenant_headers)
         assert resp.status_code == 200
         data = resp.get_json()
         assert len(data["accounts"]) == 1
@@ -346,7 +346,7 @@ class TestOutboundSMS:
 class TestInboundSMS:
     """Test inbound SMS simulation via Twin Plane."""
 
-    def test_simulate_inbound_no_webhook(self, client, account, auth_headers):
+    def test_simulate_inbound_no_webhook(self, client, account, auth_headers, tenant_headers):
         """Inbound SMS to a number with no webhook configured."""
         # Create a phone number without webhook
         client.post(
@@ -356,8 +356,8 @@ class TestInboundSMS:
         )
 
         resp = client.post("/_twin/simulate/inbound",
-            headers=auth_headers,
-            json={
+            headers=tenant_headers,
+            json={"account_sid": account["sid"],
                 "from": "+15559876543",
                 "to": "+15551234567",
                 "body": "Hello twin!",
@@ -370,10 +370,10 @@ class TestInboundSMS:
         assert data["message"]["direction"] == "inbound"
         assert data["webhook_delivered"] is False
 
-    def test_simulate_inbound_unknown_number(self, client, account, auth_headers):
+    def test_simulate_inbound_unknown_number(self, client, account, auth_headers, tenant_headers):
         resp = client.post("/_twin/simulate/inbound",
-            headers=auth_headers,
-            json={
+            headers=tenant_headers,
+            json={"account_sid": account["sid"],
                 "from": "+15559876543",
                 "to": "+15550000000",
                 "body": "Hello",
@@ -402,8 +402,8 @@ class TestTwinPlane:
         sms_scenario = [s for s in data["scenarios"] if s["name"] == "sms"][0]
         assert sms_scenario["status"] == "supported"
 
-    def test_logs(self, client, account, auth_headers):
-        resp = client.get("/_twin/logs", headers=auth_headers)
+    def test_logs(self, client, account, auth_headers, tenant_headers):
+        resp = client.get("/_twin/logs", headers=tenant_headers)
         assert resp.status_code == 200
         data = resp.get_json()
         assert isinstance(data["logs"], list)
@@ -526,19 +526,37 @@ class TestPersistence:
         """Create data, recreate the app, verify data is still there."""
         import sys
         import os
+        import base64
         sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", ".."))
         from twins_twilio_local.storage_sqlite import SQLiteStorage
         from twins_twilio.app import create_app
+        from twins_local.tenants import (
+            SQLiteTenantStore, ensure_default_tenant,
+            generate_tenant_id, generate_tenant_secret, hash_secret,
+        )
 
         db_path = str(tmp_path / "persist_test.db")
+        tenants_path = str(tmp_path / "tenants.sqlite3")
+
+        # Shared tenant store across both "runs"
+        tenants = SQLiteTenantStore(db_path=tenants_path)
+        ensure_default_tenant(tenants)
+        tenant_id = generate_tenant_id()
+        tenant_secret = generate_tenant_secret()
+        tenants.create_tenant(tenant_id, hash_secret(tenant_secret), "Persist")
+        tenant_creds = base64.b64encode(f"{tenant_id}:{tenant_secret}".encode()).decode()
+        tenant_headers = {"Authorization": f"Basic {tenant_creds}"}
 
         # First "run" — create account and phone number
         storage1 = SQLiteStorage(db_path=db_path)
-        app1 = create_app(storage=storage1, config={"base_url": "http://localhost:8080"})
+        app1 = create_app(
+            storage=storage1, tenants=tenants,
+            config={"base_url": "http://localhost:8080"},
+        )
         app1.config["TESTING"] = True
 
         with app1.test_client() as c:
-            resp = c.post("/_twin/accounts", json={"friendly_name": "Persist Test"})
+            resp = c.post("/_twin/accounts", headers=tenant_headers, json={"friendly_name": "Persist Test"})
             account = resp.get_json()
             account_sid = account["sid"]
             auth_token = account["auth_token"]
@@ -555,7 +573,10 @@ class TestPersistence:
 
         # Second "run" — new app instance, same database
         storage2 = SQLiteStorage(db_path=db_path)
-        app2 = create_app(storage=storage2, config={"base_url": "http://localhost:8080"})
+        app2 = create_app(
+            storage=storage2, tenants=tenants,
+            config={"base_url": "http://localhost:8080"},
+        )
         app2.config["TESTING"] = True
 
         with app2.test_client() as c:

@@ -70,8 +70,11 @@ def create_phone_number(account_sid):
     sid = generate_phone_number_sid()
     now = now_rfc2822()
 
+    tenant_id = g.account.get("tenant_id", "")
+
     data = {
         "sid": sid,
+        "tenant_id": tenant_id,
         "account_sid": account_sid,
         "phone_number": phone_number,
         "date_created": now,
@@ -88,6 +91,7 @@ def create_phone_number(account_sid):
     result = g.storage.create_phone_number(data)
 
     g.storage.append_log({
+        "tenant_id": tenant_id,
         "operation": "phone_number.create",
         "account_sid": account_sid,
         "phone_number_sid": sid,
@@ -106,6 +110,7 @@ def list_phone_numbers(account_sid):
     numbers = g.storage.list_phone_numbers(account_sid)
 
     g.storage.append_log({
+        "tenant_id": g.account.get("tenant_id", ""),
         "operation": "phone_number.list",
         "account_sid": account_sid,
     })
@@ -131,6 +136,7 @@ def fetch_phone_number(account_sid, sid):
         return not_found("IncomingPhoneNumber")
 
     g.storage.append_log({
+        "tenant_id": g.account.get("tenant_id", ""),
         "operation": "phone_number.fetch",
         "account_sid": account_sid,
         "phone_number_sid": sid,
@@ -153,6 +159,7 @@ def update_phone_number(account_sid, sid):
         return not_found("IncomingPhoneNumber")
 
     g.storage.append_log({
+        "tenant_id": g.account.get("tenant_id", ""),
         "operation": "phone_number.update",
         "account_sid": account_sid,
         "phone_number_sid": sid,

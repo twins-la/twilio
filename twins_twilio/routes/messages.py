@@ -93,8 +93,11 @@ def create_message(account_sid):
     sid = generate_message_sid()
     now = now_rfc2822()
 
+    tenant_id = g.account.get("tenant_id", "")
+
     msg_data = {
         "sid": sid,
+        "tenant_id": tenant_id,
         "account_sid": account_sid,
         "to": to,
         "from_number": from_number,
@@ -115,6 +118,7 @@ def create_message(account_sid):
     result = g.storage.create_message(msg_data)
 
     g.storage.append_log({
+        "tenant_id": tenant_id,
         "operation": "message.create",
         "account_sid": account_sid,
         "message_sid": sid,
@@ -153,6 +157,7 @@ def list_messages(account_sid):
     messages = g.storage.list_messages(account_sid, filters if filters else None)
 
     g.storage.append_log({
+        "tenant_id": g.account.get("tenant_id", ""),
         "operation": "message.list",
         "account_sid": account_sid,
     })
@@ -178,6 +183,7 @@ def fetch_message(account_sid, sid):
         return not_found("Message")
 
     g.storage.append_log({
+        "tenant_id": g.account.get("tenant_id", ""),
         "operation": "message.fetch",
         "account_sid": account_sid,
         "message_sid": sid,

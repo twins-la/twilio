@@ -160,8 +160,11 @@ def mail_send():
     if not subject and personalizations:
         subject = personalizations[0].get("subject", "")
 
+    tenant_id = g.api_key.get("tenant_id", "")
+
     email_data = {
         "message_id": message_id,
+        "tenant_id": tenant_id,
         "account_sid": g.account_sid,
         "from_email": from_obj.get("email", ""),
         "from_name": from_obj.get("name", ""),
@@ -176,6 +179,7 @@ def mail_send():
     g.storage.create_email(email_data)
 
     g.storage.append_log({
+        "tenant_id": tenant_id,
         "operation": "email.send",
         "account_sid": g.account_sid,
         "message_id": message_id,

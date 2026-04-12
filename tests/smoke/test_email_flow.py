@@ -17,10 +17,10 @@ import pytest
 class TestApiKeyCreation:
     """Test API key management via Twin Plane."""
 
-    def test_create_api_key(self, client, account, auth_headers):
+    def test_create_api_key(self, client, account, auth_headers, tenant_headers):
         resp = client.post("/_twin/api-keys",
-            headers=auth_headers,
-            json={"name": "Test Key"},
+            headers=tenant_headers,
+            json={"account_sid": account["sid"], "name": "Test Key"},
         )
         assert resp.status_code == 201
         data = resp.get_json()
@@ -34,7 +34,7 @@ class TestApiKeyCreation:
         assert len(parts[1]) > 0
 
     def test_create_api_key_no_auth_returns_401(self, client, account):
-        resp = client.post("/_twin/api-keys", json={"name": "Test"})
+        resp = client.post("/_twin/api-keys", json={"account_sid": account["sid"], "name": "Test"})
         assert resp.status_code == 401
 
     def test_create_api_key_wrong_auth_returns_401(self, client, account):
@@ -42,28 +42,28 @@ class TestApiKeyCreation:
         creds = base64.b64encode(f"{account['sid']}:wrongtoken".encode()).decode()
         resp = client.post("/_twin/api-keys",
             headers={"Authorization": f"Basic {creds}"},
-            json={"name": "Test"},
+            json={"account_sid": account["sid"], "name": "Test"},
         )
         assert resp.status_code == 401
 
 
 @pytest.fixture
-def api_key(client, account, auth_headers):
+def api_key(client, account, auth_headers, tenant_headers):
     """Create and return a test API key via Twin Plane."""
     resp = client.post("/_twin/api-keys",
-        headers=auth_headers,
-        json={"name": "Test Key"},
+        headers=tenant_headers,
+        json={"account_sid": account["sid"], "name": "Test Key"},
     )
     assert resp.status_code == 201
     return resp.get_json()
 
 
 @pytest.fixture
-def verified_sender(client, account, auth_headers):
+def verified_sender(client, account, auth_headers, tenant_headers):
     """Register sender@example.com as a verified sender for the test account."""
     resp = client.post("/_twin/verified-senders",
-        headers=auth_headers,
-        json={"email": "sender@example.com"},
+        headers=tenant_headers,
+        json={"account_sid": account["sid"], "email": "sender@example.com"},
     )
     assert resp.status_code == 201
     return resp.get_json()
@@ -380,7 +380,7 @@ class TestEmailFormatValidation:
 class TestEmailStatusProgression:
     """Test email delivery status simulation."""
 
-    def test_email_progresses_to_delivered(self, client, account, auth_headers, email_auth_headers):
+    def test_email_progresses_to_delivered(self, client, account, auth_headers, email_auth_headers, tenant_headers):
         resp = client.post(
             "/v3/mail/send",
             json={
@@ -398,7 +398,7 @@ class TestEmailStatusProgression:
         # Poll for background delivery simulation to complete
         for _ in range(30):
             time.sleep(0.1)
-            fetch_resp = client.get(f"/_twin/emails/{message_id}", headers=auth_headers)
+            fetch_resp = client.get(f"/_twin/emails/{message_id}", headers=tenant_headers)
             assert fetch_resp.status_code == 200
             data = fetch_resp.get_json()
             if data["status"] == "delivered":
@@ -409,7 +409,7 @@ class TestEmailStatusProgression:
 class TestEmailRetrieval:
     """Test email retrieval via Twin Plane."""
 
-    def test_list_emails(self, client, account, auth_headers, email_auth_headers):
+    def test_list_emails(self, client, account, auth_headers, email_auth_headers, tenant_headers):
         # Send an email first
         client.post(
             "/v3/mail/send",
@@ -424,7 +424,7 @@ class TestEmailRetrieval:
             headers=email_auth_headers,
         )
 
-        resp = client.get("/_twin/emails", headers=auth_headers)
+        resp = client.get("/_twin/emails", headers=tenant_headers)
         assert resp.status_code == 200
         data = resp.get_json()
         assert len(data["emails"]) >= 1
@@ -432,7 +432,7 @@ class TestEmailRetrieval:
         assert email["from"]["email"] == "sender@example.com"
         assert email["subject"] == "List test"
 
-    def test_fetch_email(self, client, auth_headers, email_auth_headers):
+    def test_fetch_email(self, client, auth_headers, email_auth_headers, tenant_headers):
         send_resp = client.post(
             "/v3/mail/send",
             json={
@@ -447,18 +447,18 @@ class TestEmailRetrieval:
         )
         message_id = send_resp.headers["X-Message-Id"]
 
-        resp = client.get(f"/_twin/emails/{message_id}", headers=auth_headers)
+        resp = client.get(f"/_twin/emails/{message_id}", headers=tenant_headers)
         assert resp.status_code == 200
         data = resp.get_json()
         assert data["message_id"] == message_id
         assert data["subject"] == "Fetch test"
         assert data["personalizations"][0]["to"][0]["email"] == "recipient@example.com"
 
-    def test_fetch_nonexistent_email(self, client, auth_headers):
-        resp = client.get("/_twin/emails/nonexistent123", headers=auth_headers)
+    def test_fetch_nonexistent_email(self, client, auth_headers, tenant_headers):
+        resp = client.get("/_twin/emails/nonexistent123", headers=tenant_headers)
         assert resp.status_code == 404
 
-    def test_list_emails_scoped_to_account(self, client, account, auth_headers, email_auth_headers):
+    def test_list_emails_scoped_to_account(self, client, account, auth_headers, email_auth_headers, tenant_headers):
         """List emails returns only the authenticated account's emails."""
         client.post(
             "/v3/mail/send",
@@ -473,7 +473,7 @@ class TestEmailRetrieval:
             headers=email_auth_headers,
         )
 
-        resp = client.get("/_twin/emails", headers=auth_headers)
+        resp = client.get("/_twin/emails", headers=tenant_headers)
         assert resp.status_code == 200
         data = resp.get_json()
         assert len(data["emails"]) >= 1
@@ -496,7 +496,7 @@ class TestEmailScenario:
 class TestEmailLogging:
     """Test that email operations are logged."""
 
-    def test_send_email_logged(self, client, account, auth_headers, email_auth_headers):
+    def test_send_email_logged(self, client, account, auth_headers, email_auth_headers, tenant_headers):
         client.post(
             "/v3/mail/send",
             json={
@@ -510,7 +510,7 @@ class TestEmailLogging:
             headers=email_auth_headers,
         )
 
-        resp = client.get("/_twin/logs", headers=auth_headers)
+        resp = client.get("/_twin/logs", headers=tenant_headers)
         assert resp.status_code == 200
         data = resp.get_json()
         operations = [log["entry"]["operation"] for log in data["logs"]]
@@ -537,10 +537,10 @@ class TestEmailSIDFormats:
 class TestVerifiedSenderManagement:
     """Test verified sender management via Twin Plane."""
 
-    def test_create_verified_sender(self, client, account, auth_headers):
+    def test_create_verified_sender(self, client, account, auth_headers, tenant_headers):
         resp = client.post("/_twin/verified-senders",
-            headers=auth_headers,
-            json={"email": "newsender@example.com", "name": "New Sender"},
+            headers=tenant_headers,
+            json={"account_sid": account["sid"], "email": "newsender@example.com", "name": "New Sender"},
         )
         assert resp.status_code == 201
         data = resp.get_json()
@@ -548,27 +548,27 @@ class TestVerifiedSenderManagement:
         assert data["name"] == "New Sender"
         assert data["account_sid"] == account["sid"]
 
-    def test_list_verified_senders(self, client, account, auth_headers):
+    def test_list_verified_senders(self, client, account, auth_headers, tenant_headers):
         client.post("/_twin/verified-senders",
-            headers=auth_headers,
-            json={"email": "listed@example.com"},
+            headers=tenant_headers,
+            json={"account_sid": account["sid"], "email": "listed@example.com"},
         )
-        resp = client.get("/_twin/verified-senders", headers=auth_headers)
+        resp = client.get("/_twin/verified-senders", headers=tenant_headers)
         assert resp.status_code == 200
         data = resp.get_json()
         emails = [s["email"] for s in data["verified_senders"]]
         assert "listed@example.com" in emails
 
-    def test_duplicate_verified_sender_is_idempotent(self, client, account, auth_headers):
+    def test_duplicate_verified_sender_is_idempotent(self, client, account, auth_headers, tenant_headers):
         """Registering the same email twice is idempotent (INSERT OR IGNORE)."""
         resp1 = client.post("/_twin/verified-senders",
-            headers=auth_headers,
-            json={"email": "dup@example.com"},
+            headers=tenant_headers,
+            json={"account_sid": account["sid"], "email": "dup@example.com"},
         )
         assert resp1.status_code == 201
         resp2 = client.post("/_twin/verified-senders",
-            headers=auth_headers,
-            json={"email": "dup@example.com"},
+            headers=tenant_headers,
+            json={"account_sid": account["sid"], "email": "dup@example.com"},
         )
         assert resp2.status_code == 201
         assert resp1.get_json()["email"] == resp2.get_json()["email"]
@@ -598,12 +598,12 @@ class TestSenderVerification:
         assert data["errors"][0]["field"] == "from"
         assert "verified Sender Identity" in data["errors"][0]["message"]
 
-    def test_cross_account_sender_isolation(self, client):
-        """Account A's verified sender does not authorize account B."""
+    def test_cross_account_sender_isolation(self, client, tenant_headers):
+        """Within one tenant, account A's verified sender does not authorize account B."""
         import base64
 
-        # Create account A and register a verified sender
         acct_a = client.post("/_twin/accounts",
+            headers=tenant_headers,
             json={"friendly_name": "Account A"},
         ).get_json()
         creds_a = base64.b64encode(
@@ -612,12 +612,12 @@ class TestSenderVerification:
         headers_a = {"Authorization": f"Basic {creds_a}"}
 
         client.post("/_twin/verified-senders",
-            headers=headers_a,
-            json={"email": "shared@example.com"},
+            headers=tenant_headers,
+            json={"account_sid": acct_a["sid"], "email": "shared@example.com"},
         )
 
-        # Create account B with API key but no verified sender
         acct_b = client.post("/_twin/accounts",
+            headers=tenant_headers,
             json={"friendly_name": "Account B"},
         ).get_json()
         creds_b = base64.b64encode(
@@ -626,8 +626,8 @@ class TestSenderVerification:
         headers_b = {"Authorization": f"Basic {creds_b}"}
 
         key_b = client.post("/_twin/api-keys",
-            headers=headers_b,
-            json={"name": "Key B"},
+            headers=tenant_headers,
+            json={"account_sid": acct_b["sid"], "name": "Key B"},
         ).get_json()
 
         # Account B tries to send from the same address — should get 403

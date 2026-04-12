@@ -2,44 +2,62 @@
 
 Served at /_twin/ — separate from the Twilio API surface.
 
-Authentication: Most endpoints require HTTP Basic Auth using the same
-AccountSid:AuthToken credentials as the Twilio API. Exceptions:
-  - POST /_twin/accounts (bootstrap — creates credentials)
-  - GET  /_twin/health, /scenarios, /settings, /references (read-only system info)
+Authentication:
+  - POST /_twin/tenants (bootstrap — creates credentials) — unauthenticated.
+  - GET  /_twin/health, /scenarios, /references, /settings — unauthenticated read-only.
+  - All other endpoints require tenant auth (Basic tenant_id:tenant_secret)
+    or operator-admin (Bearer or X-Twin-Admin-Token).
 
-All authenticated endpoints are scoped to the caller's account.
+All authenticated endpoints are scoped to the caller's tenant.
 
 Provides:
+  - Tenant creation (Twin Plane — not Twilio API)
   - Scenario listing
   - Authoritative references
-  - Operation logs (per-account)
+  - Operation logs (per-tenant)
   - Settings
-  - Inbound SMS simulation (per-account)
-  - Account management (create accounts — not part of the Twilio emulation surface)
+  - Inbound SMS simulation (per-tenant; the caller's account within the tenant)
+  - Account management (create Twilio-emulation accounts inside a tenant)
   - Health check
-  - Feedback collection (per-account)
+  - Feedback collection (per-tenant)
 """
 
 import logging
 
 from flask import Blueprint, g, jsonify, request
 
+from twins_local.tenants import (
+    OPERATOR_ADMIN_TENANT_ID,
+    generate_tenant_id,
+    generate_tenant_secret,
+    hash_secret,
+    reject_default_in_cloud,
+)
+
 from ..models import account_to_json, account_to_json_public, message_to_json, now_rfc2822
 from ..email_models import email_to_json
 from ..sids import generate_account_sid, generate_auth_token, generate_message_sid, generate_api_key, generate_feedback_id
 from ..webhooks import build_webhook_params, deliver_webhook
 from ..twiml import parse_message_response
-from .auth import require_twin_auth, require_twin_or_admin_auth
+from .auth import require_tenant, require_tenant_or_admin
 
 logger = logging.getLogger(__name__)
 
 twin_plane_bp = Blueprint("twin_plane", __name__, url_prefix="/_twin")
 
 
+def _scope_tenant_id() -> str:
+    """Tenant_id to stamp on log records for the current request."""
+    return OPERATOR_ADMIN_TENANT_ID if g.get("is_admin") else g.tenant_id
+
+
+# -- Unauth info endpoints --
+
+
 @twin_plane_bp.route("/health", methods=["GET"])
 def health():
     """Health check endpoint."""
-    return jsonify({"status": "ok", "twin": "twilio", "version": "0.1.0"})
+    return jsonify({"status": "ok", "twin": "twilio", "version": "0.2.0"})
 
 
 @twin_plane_bp.route("/scenarios", methods=["GET"])
@@ -127,33 +145,81 @@ def references():
     })
 
 
-@twin_plane_bp.route("/logs", methods=["GET"])
-@require_twin_or_admin_auth
-def logs():
-    """Retrieve operation logs. Admin: all logs. Tenant: own logs."""
-    limit = request.args.get("limit", 100, type=int)
-    offset = request.args.get("offset", 0, type=int)
-    account_sid = None if g.is_admin else g.account_sid
-    entries = g.storage.list_logs(limit=limit, offset=offset, account_sid=account_sid)
-    return jsonify({"logs": entries, "limit": limit, "offset": offset})
-
-
 @twin_plane_bp.route("/settings", methods=["GET"])
 def get_settings():
     """Get twin settings."""
     return jsonify({
         "twin": "twilio",
-        "version": "0.1.0",
+        "version": "0.2.0",
         "base_url": g.base_url,
     })
 
 
-@twin_plane_bp.route("/accounts", methods=["POST"])
-def create_account():
-    """Create a new account (Twin Plane operation, not Twilio API).
+# -- Tenants (bootstrap) --
 
-    This is how users create accounts on the twin. Real Twilio account
-    creation requires their console; the twin makes it a simple API call.
+
+@twin_plane_bp.route("/tenants", methods=["POST"])
+def create_tenant():
+    """Create a new tenant.
+
+    Unauthenticated bootstrap. Returns ``tenant_id`` and ``tenant_secret``
+    exactly once; the secret is not stored in plaintext.
+    """
+    friendly_name = request.json.get("friendly_name", "") if request.is_json else ""
+
+    if g.get("is_cloud"):
+        tenant_id = generate_tenant_id()
+        # UUIDs cannot collide with "default", but be defensive.
+        reject_default_in_cloud(tenant_id)
+    else:
+        tenant_id = generate_tenant_id()
+
+    tenant_secret = generate_tenant_secret()
+    tenant = g.tenants.create_tenant(
+        tenant_id=tenant_id,
+        secret_hash=hash_secret(tenant_secret),
+        friendly_name=friendly_name,
+    )
+
+    g.storage.append_log({
+        "tenant_id": tenant_id,
+        "operation": "twin.tenant.create",
+    })
+
+    resp = jsonify({
+        "tenant_id": tenant_id,
+        "tenant_secret": tenant_secret,
+        "friendly_name": tenant["friendly_name"],
+        "created_at": tenant["created_at"],
+    })
+    resp.status_code = 201
+    return resp
+
+
+# -- Logs (tenant-scoped) --
+
+
+@twin_plane_bp.route("/logs", methods=["GET"])
+@require_tenant_or_admin
+def logs():
+    """Retrieve operation logs. Admin: all logs. Tenant: own logs."""
+    limit = request.args.get("limit", 100, type=int)
+    offset = request.args.get("offset", 0, type=int)
+    tenant_id = None if g.is_admin else g.tenant_id
+    entries = g.storage.list_logs(limit=limit, offset=offset, tenant_id=tenant_id)
+    return jsonify({"logs": entries, "limit": limit, "offset": offset})
+
+
+# -- Accounts (Twilio emulation resources, owned by the tenant) --
+
+
+@twin_plane_bp.route("/accounts", methods=["POST"])
+@require_tenant
+def create_account():
+    """Create a Twilio-emulation account inside the authenticated tenant.
+
+    Real Twilio account creation requires their console; the twin makes
+    it a simple API call, scoped to the calling tenant.
     """
     friendly_name = request.json.get("friendly_name", "") if request.is_json else ""
 
@@ -162,6 +228,7 @@ def create_account():
     now = now_rfc2822()
 
     account = g.storage.create_account(
+        tenant_id=g.tenant_id,
         sid=sid,
         auth_token=auth_token,
         friendly_name=friendly_name or f"Twin Account {sid[-8:]}",
@@ -171,6 +238,7 @@ def create_account():
     account.setdefault("status", "active")
 
     g.storage.append_log({
+        "tenant_id": g.tenant_id,
         "operation": "twin.account.create",
         "account_sid": sid,
     })
@@ -181,33 +249,50 @@ def create_account():
 
 
 @twin_plane_bp.route("/accounts", methods=["GET"])
-@require_twin_or_admin_auth
+@require_tenant_or_admin
 def list_accounts():
-    """List accounts. Admin: all accounts (no auth_tokens). Tenant: own account."""
+    """List accounts. Admin: all accounts. Tenant: the tenant's accounts."""
     if g.is_admin:
         accounts = g.storage.list_accounts()
         items = [account_to_json_public(a, g.base_url) for a in accounts]
         return jsonify({"accounts": items})
-    return jsonify({"accounts": [account_to_json(g.account, g.base_url)]})
+    accounts = g.storage.list_accounts(tenant_id=g.tenant_id)
+    items = [account_to_json(a, g.base_url) for a in accounts]
+    return jsonify({"accounts": items})
+
+
+# -- API Keys --
 
 
 @twin_plane_bp.route("/api-keys", methods=["POST"])
-@require_twin_auth
+@require_tenant
 def create_api_key():
-    """Create a SendGrid-style API key for the authenticated account.
+    """Create a SendGrid-style API key for an account within the tenant.
 
-    Optional JSON body:
+    Required JSON body:
+        account_sid: The account that owns the key.
+
+    Optional:
         name: A friendly name for the key.
     """
-    name = ""
-    if request.is_json:
-        name = request.json.get("name", "")
+    if not request.is_json:
+        return jsonify({"error": "JSON body required"}), 400
 
-    account_sid = g.account_sid
+    data = request.json
+    account_sid = data.get("account_sid")
+    if not account_sid:
+        return jsonify({"error": "'account_sid' is required"}), 400
+
+    account = g.storage.get_account(account_sid)
+    if not account or account.get("tenant_id") != g.tenant_id:
+        return jsonify({"error": "Account not found"}), 404
+
+    name = data.get("name", "")
 
     key_id, key_secret, full_key = generate_api_key()
 
     g.storage.create_api_key(
+        tenant_id=g.tenant_id,
         key_id=key_id,
         key_secret=key_secret,
         account_sid=account_sid,
@@ -215,6 +300,7 @@ def create_api_key():
     )
 
     g.storage.append_log({
+        "tenant_id": g.tenant_id,
         "operation": "twin.api_key.create",
         "account_sid": account_sid,
         "key_id": key_id,
@@ -230,12 +316,16 @@ def create_api_key():
     return resp
 
 
+# -- Verified Senders --
+
+
 @twin_plane_bp.route("/verified-senders", methods=["POST"])
-@require_twin_auth
+@require_tenant
 def create_verified_sender():
-    """Register a verified sender identity for the authenticated account.
+    """Register a verified sender identity for an account within the tenant.
 
     Required JSON body:
+        account_sid: The account that owns the sender.
         email: The sender email address to verify.
 
     Optional:
@@ -245,21 +335,30 @@ def create_verified_sender():
         return jsonify({"error": "JSON body required"}), 400
 
     data = request.json
+    account_sid = data.get("account_sid")
     email = data.get("email")
+    if not account_sid:
+        return jsonify({"error": "'account_sid' is required"}), 400
     if not email or not isinstance(email, str) or "@" not in email:
         return jsonify({"error": "'email' is required and must be a valid email address"}), 400
+
+    account = g.storage.get_account(account_sid)
+    if not account or account.get("tenant_id") != g.tenant_id:
+        return jsonify({"error": "Account not found"}), 404
 
     name = data.get("name", "")
 
     sender = g.storage.create_verified_sender(
-        account_sid=g.account_sid,
+        tenant_id=g.tenant_id,
+        account_sid=account_sid,
         email=email,
         name=name,
     )
 
     g.storage.append_log({
+        "tenant_id": g.tenant_id,
         "operation": "twin.verified_sender.create",
-        "account_sid": g.account_sid,
+        "account_sid": account_sid,
         "email": email,
     })
 
@@ -269,91 +368,97 @@ def create_verified_sender():
 
 
 @twin_plane_bp.route("/verified-senders", methods=["GET"])
-@require_twin_or_admin_auth
+@require_tenant_or_admin
 def list_verified_senders():
-    """List verified senders. Admin: all. Tenant: own."""
+    """List verified senders. Admin: all. Tenant: own tenant's."""
     if g.is_admin:
         accounts = g.storage.list_accounts()
-        senders = []
-        for acct in accounts:
-            senders.extend(g.storage.list_verified_senders(acct["sid"]))
     else:
-        senders = g.storage.list_verified_senders(g.account_sid)
+        accounts = g.storage.list_accounts(tenant_id=g.tenant_id)
+    senders = []
+    for acct in accounts:
+        senders.extend(g.storage.list_verified_senders(acct["sid"]))
     return jsonify({"verified_senders": senders})
 
 
+# -- Emails --
+
+
 @twin_plane_bp.route("/emails", methods=["GET"])
-@require_twin_or_admin_auth
+@require_tenant_or_admin
 def list_emails():
-    """List emails. Admin: all emails. Tenant: own emails."""
+    """List emails. Admin: all. Tenant: own tenant's."""
     if g.is_admin:
         accounts = g.storage.list_accounts()
-        emails = []
-        for acct in accounts:
-            emails.extend(g.storage.list_emails(acct["sid"]))
     else:
-        emails = g.storage.list_emails(g.account_sid)
+        accounts = g.storage.list_accounts(tenant_id=g.tenant_id)
+    emails = []
+    for acct in accounts:
+        emails.extend(g.storage.list_emails(acct["sid"]))
     items = [email_to_json(e) for e in emails]
     return jsonify({"emails": items})
 
 
 @twin_plane_bp.route("/emails/<message_id>", methods=["GET"])
-@require_twin_or_admin_auth
+@require_tenant_or_admin
 def fetch_email(message_id):
-    """Fetch a single email. Admin: any email. Tenant: own email."""
+    """Fetch a single email. Admin: any. Tenant: own."""
     if g.is_admin:
         accounts = g.storage.list_accounts()
-        email = None
-        for acct in accounts:
-            email = g.storage.get_email(acct["sid"], message_id)
-            if email:
-                break
     else:
-        email = g.storage.get_email(g.account_sid, message_id)
+        accounts = g.storage.list_accounts(tenant_id=g.tenant_id)
+    email = None
+    for acct in accounts:
+        email = g.storage.get_email(acct["sid"], message_id)
+        if email:
+            break
     if not email:
         return jsonify({"error": "Email not found"}), 404
     return jsonify(email_to_json(email))
 
 
-@twin_plane_bp.route("/simulate/inbound", methods=["POST"])
-@require_twin_auth
-def simulate_inbound_sms():
-    """Simulate an inbound SMS message for the authenticated account.
+# -- Simulate inbound SMS --
 
-    This triggers the full inbound flow:
-    1. Creates an inbound message record
-    2. Looks up the destination number's webhook configuration
-    3. Delivers the webhook with proper Twilio parameters and signature
-    4. Parses TwiML response for auto-reply messages
+
+@twin_plane_bp.route("/simulate/inbound", methods=["POST"])
+@require_tenant
+def simulate_inbound_sms():
+    """Simulate an inbound SMS for an account inside the tenant.
 
     Required JSON body:
+        account_sid: The destination account on the tenant.
         from: sender phone number
-        to: destination phone number (must be provisioned on the caller's account)
+        to: destination phone number (must be provisioned on the account)
         body: message text
     """
     if not request.is_json:
         return jsonify({"error": "JSON body required"}), 400
 
     data = request.json
+    account_sid = data.get("account_sid")
     from_number = data.get("from")
     to_number = data.get("to")
     body = data.get("body")
 
+    if not account_sid:
+        return jsonify({"error": "'account_sid' is required"}), 400
     if not from_number or not to_number or not body:
         return jsonify({"error": "'from', 'to', and 'body' are required"}), 400
 
-    # Find the phone number resource — scoped to authenticated account
-    phone_number_record = g.storage.get_phone_number_by_number(g.account_sid, to_number)
-    account = g.account
+    account = g.storage.get_account(account_sid)
+    if not account or account.get("tenant_id") != g.tenant_id:
+        return jsonify({"error": "Account not found"}), 404
 
+    phone_number_record = g.storage.get_phone_number_by_number(account_sid, to_number)
     if not phone_number_record:
-        return jsonify({"error": f"No phone number '{to_number}' found on your account"}), 404
+        return jsonify({"error": f"No phone number '{to_number}' found on account"}), 404
 
     # Create the inbound message record
     message_sid = generate_message_sid()
     now = now_rfc2822()
     msg_data = {
         "sid": message_sid,
+        "tenant_id": g.tenant_id,
         "account_sid": account["sid"],
         "to": to_number,
         "from_number": from_number,
@@ -368,6 +473,7 @@ def simulate_inbound_sms():
     g.storage.create_message(msg_data)
 
     g.storage.append_log({
+        "tenant_id": g.tenant_id,
         "operation": "twin.simulate.inbound",
         "account_sid": account["sid"],
         "message_sid": message_sid,
@@ -376,7 +482,6 @@ def simulate_inbound_sms():
         "body": body,
     })
 
-    # Deliver webhook if configured
     sms_url = phone_number_record.get("sms_url", "")
     sms_method = phone_number_record.get("sms_method", "POST")
     webhook_delivered = False
@@ -391,7 +496,6 @@ def simulate_inbound_sms():
             body=body,
         )
 
-        # For simulation, deliver synchronously so we can return the result
         from ..webhooks import compute_signature
         import requests as http_requests
 
@@ -413,13 +517,13 @@ def simulate_inbound_sms():
 
             webhook_delivered = True
 
-            # Parse TwiML response for auto-reply
             if resp.status_code == 200 and resp.text.strip():
                 reply_bodies = parse_message_response(resp.text)
                 for reply_body in reply_bodies:
                     reply_sid = generate_message_sid()
                     reply_data = {
                         "sid": reply_sid,
+                        "tenant_id": g.tenant_id,
                         "account_sid": account["sid"],
                         "to": from_number,
                         "from_number": to_number,
@@ -435,6 +539,7 @@ def simulate_inbound_sms():
                     reply_messages.append(reply_data)
 
                     g.storage.append_log({
+                        "tenant_id": g.tenant_id,
                         "operation": "message.reply",
                         "account_sid": account["sid"],
                         "message_sid": reply_sid,
@@ -459,19 +564,18 @@ def simulate_inbound_sms():
 
 
 @twin_plane_bp.route("/feedback", methods=["POST"])
-@require_twin_auth
+@require_tenant
 def submit_feedback():
     """Submit feedback about the twin.
 
-    Requires authentication. The account_sid is set automatically from
-    the caller's credentials.
+    Requires tenant auth. The tenant_id is set automatically.
 
     Required JSON body:
         body: Freeform feedback text.
 
     Optional:
         category: One of "bug", "missing-scenario", "feature-request", "general".
-        context: Dict of structured data (error codes, message SIDs, scenario names, etc.).
+        context: Dict of structured data.
     """
     if not request.is_json:
         return jsonify({"error": "JSON body required"}), 400
@@ -487,10 +591,10 @@ def submit_feedback():
 
     feedback_data = {
         "id": feedback_id,
+        "tenant_id": g.tenant_id,
         "body": body.strip(),
         "category": data.get("category", ""),
         "context": data.get("context", {}),
-        "account_sid": g.account_sid,
         "status": "pending",
         "date_created": now,
         "date_updated": now,
@@ -498,8 +602,8 @@ def submit_feedback():
     feedback = g.storage.create_feedback(feedback_data)
 
     g.storage.append_log({
+        "tenant_id": g.tenant_id,
         "operation": "twin.feedback.submit",
-        "account_sid": g.account_sid,
         "feedback_id": feedback_id,
         "category": feedback_data["category"],
     })
@@ -508,7 +612,7 @@ def submit_feedback():
 
 
 @twin_plane_bp.route("/feedback", methods=["GET"])
-@require_twin_or_admin_auth
+@require_tenant_or_admin
 def list_feedback():
     """List feedback. Admin: all feedback. Tenant: own feedback.
 
@@ -516,25 +620,25 @@ def list_feedback():
         status: Filter by status (pending, reviewed, published).
     """
     status = request.args.get("status")
-    account_sid = None if g.is_admin else g.account_sid
-    items = g.storage.list_feedback(status=status, account_sid=account_sid)
+    tenant_id = None if g.is_admin else g.tenant_id
+    items = g.storage.list_feedback(status=status, tenant_id=tenant_id)
     return jsonify({"feedback": items})
 
 
 @twin_plane_bp.route("/feedback/<feedback_id>", methods=["GET"])
-@require_twin_or_admin_auth
+@require_tenant_or_admin
 def get_feedback(feedback_id):
     """Fetch a single feedback item. Admin: any. Tenant: own."""
     feedback = g.storage.get_feedback(feedback_id)
     if not feedback:
         return jsonify({"error": "Feedback not found"}), 404
-    if not g.is_admin and feedback.get("account_sid") != g.account_sid:
+    if not g.is_admin and feedback.get("tenant_id") != g.tenant_id:
         return jsonify({"error": "Feedback not found"}), 404
     return jsonify(feedback)
 
 
 @twin_plane_bp.route("/feedback/<feedback_id>", methods=["POST"])
-@require_twin_or_admin_auth
+@require_tenant_or_admin
 def update_feedback(feedback_id):
     """Update a feedback record. Admin: any. Tenant: own.
 
@@ -547,7 +651,7 @@ def update_feedback(feedback_id):
     existing = g.storage.get_feedback(feedback_id)
     if not existing:
         return jsonify({"error": "Feedback not found"}), 404
-    if not g.is_admin and existing.get("account_sid") != g.account_sid:
+    if not g.is_admin and existing.get("tenant_id") != g.tenant_id:
         return jsonify({"error": "Feedback not found"}), 404
 
     data = request.json
@@ -559,8 +663,8 @@ def update_feedback(feedback_id):
     feedback = g.storage.update_feedback(feedback_id, updates)
 
     g.storage.append_log({
+        "tenant_id": _scope_tenant_id(),
         "operation": "twin.feedback.update",
-        "account_sid": g.account_sid or "admin",
         "feedback_id": feedback_id,
         "status": updates.get("status", ""),
     })

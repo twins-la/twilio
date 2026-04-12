@@ -24,6 +24,7 @@ def fetch_account(account_sid):
         return not_found("Account")
 
     g.storage.append_log({
+        "tenant_id": g.account.get("tenant_id", ""),
         "operation": "account.fetch",
         "account_sid": account_sid,
     })
