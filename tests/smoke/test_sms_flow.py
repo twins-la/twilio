@@ -415,6 +415,25 @@ class TestTwinPlane:
         data = resp.get_json()
         assert data["twin"] == "twilio"
 
+    def test_references(self, client):
+        resp = client.get("/_twin/references")
+        assert resp.status_code == 200
+        data = resp.get_json()
+        refs = data["references"]
+        assert len(refs) == 9
+        # Every reference has the required fields
+        for ref in refs:
+            assert "title" in ref
+            assert "url" in ref
+            assert "retrieved" in ref
+        # SMS references present
+        titles = [r["title"] for r in refs]
+        assert "Twilio Messages API" in titles
+        assert "Twilio Webhook Security" in titles
+        # Email references present
+        assert "SendGrid Mail Send API" in titles
+        assert "SendGrid Authentication" in titles
+
 
 class TestWebhookSignature:
     """Test X-Twilio-Signature computation."""

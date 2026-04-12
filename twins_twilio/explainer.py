@@ -43,6 +43,7 @@ Twin Plane (no auth):
   GET  /_twin/health             — status check
   GET  /_twin/scenarios          — supported scenarios
   GET  /_twin/settings           — twin settings
+  GET  /_twin/references         — authoritative sources used to build this twin
   POST /_twin/accounts           — create account
 
 Twin Plane (Basic Auth — use AccountSid:AuthToken):

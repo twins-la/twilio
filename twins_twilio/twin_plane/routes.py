@@ -5,12 +5,13 @@ Served at /_twin/ — separate from the Twilio API surface.
 Authentication: Most endpoints require HTTP Basic Auth using the same
 AccountSid:AuthToken credentials as the Twilio API. Exceptions:
   - POST /_twin/accounts (bootstrap — creates credentials)
-  - GET  /_twin/health, /scenarios, /settings (read-only system info)
+  - GET  /_twin/health, /scenarios, /settings, /references (read-only system info)
 
 All authenticated endpoints are scoped to the caller's account.
 
 Provides:
   - Scenario listing
+  - Authoritative references
   - Operation logs (per-account)
   - Settings
   - Inbound SMS simulation (per-account)
@@ -67,6 +68,60 @@ def scenarios():
                     "email_status_progression",
                     "sendgrid_api_key_auth",
                 ],
+            },
+        ],
+    })
+
+
+@twin_plane_bp.route("/references", methods=["GET"])
+def references():
+    """Return the authoritative sources used to build this twin."""
+    return jsonify({
+        "references": [
+            {
+                "title": "Twilio Messages API",
+                "url": "https://www.twilio.com/docs/messaging/api/message-resource",
+                "retrieved": "2026-04-04",
+            },
+            {
+                "title": "Twilio IncomingPhoneNumber API",
+                "url": "https://www.twilio.com/docs/phone-numbers/api/incomingphonenumber-resource",
+                "retrieved": "2026-04-04",
+            },
+            {
+                "title": "Twilio Account API",
+                "url": "https://www.twilio.com/docs/iam/api/account",
+                "retrieved": "2026-04-04",
+            },
+            {
+                "title": "Twilio Webhook Security",
+                "url": "https://www.twilio.com/docs/usage/security",
+                "retrieved": "2026-04-04",
+            },
+            {
+                "title": "Twilio SMS Webhooks (TwiML)",
+                "url": "https://www.twilio.com/docs/messaging/twiml",
+                "retrieved": "2026-04-04",
+            },
+            {
+                "title": "SendGrid Mail Send API",
+                "url": "https://www.twilio.com/docs/sendgrid/api-reference/mail-send/mail-send",
+                "retrieved": "2026-04-06",
+            },
+            {
+                "title": "SendGrid Authentication",
+                "url": "https://www.twilio.com/docs/sendgrid/for-developers/sending-email/authentication",
+                "retrieved": "2026-04-06",
+            },
+            {
+                "title": "SendGrid X-Message-Id",
+                "url": "https://www.twilio.com/docs/sendgrid/glossary/x-message-id",
+                "retrieved": "2026-04-06",
+            },
+            {
+                "title": "SendGrid Error Format",
+                "url": "https://www.twilio.com/docs/sendgrid/api-reference/how-to-use-the-sendgrid-v3-api/responses",
+                "retrieved": "2026-04-06",
             },
         ],
     })
