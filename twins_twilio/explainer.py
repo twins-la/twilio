@@ -90,9 +90,9 @@ SendGrid Email API (Bearer Auth):
 
 ## Local Usage
 
-pip install twins-twilio twins-local
+pip install twins-twilio-local
 python -c "
-from twins_local.storage_sqlite import SQLiteStorage
+from twins_twilio_local.storage_sqlite import SQLiteStorage
 from twins_twilio.app import create_app
 storage = SQLiteStorage('twin.db')
 app = create_app(storage=storage)
@@ -274,7 +274,7 @@ EXPLAINER_HTML = """\
             <code>POST /_twin/accounts</code> and use the returned credentials.
         </p>
         <p>
-            <strong>Local:</strong> Install with <code>pip install twins-twilio twins-local</code>
+            <strong>Local:</strong> Install with <code>pip install twins-twilio-local</code>
             and run a local instance on any port. Same API, same behavior, your machine.
         </p>
 

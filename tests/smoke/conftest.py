@@ -11,11 +11,11 @@ import pytest
 
 from twins_twilio.app import create_app
 
-# Add the local package to the path so we can use SQLiteStorage
+# twins_twilio_local sibling lives inside this repo; put the repo root on sys.path.
 import sys
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "..", "..", "..", "local"))
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", ".."))
 
-from twins_local.storage_sqlite import SQLiteStorage
+from twins_twilio_local.storage_sqlite import SQLiteStorage
 
 
 @pytest.fixture

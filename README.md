@@ -16,14 +16,14 @@ See [SCENARIOS.md](SCENARIOS.md) for the full scope and authoritative references
 
 This package is not run directly. It is loaded by a host:
 
-- **Local**: [twins-local](https://github.com/twins-la/local) — run locally with Docker Compose
+- **Local**: `twins-twilio-local` (sibling package under `twins_twilio_local/`) — run locally via gunicorn or `python -m twins_twilio_local`
 - **Cloud**: available at [twilio.twins.la](https://twilio.twins.la)
 
-## Quick Start (with local host)
+## Quick Start (local)
 
 ```bash
-cd local/
-docker compose up
+pip install -e . ./twins_twilio_local/
+python -m twins_twilio_local
 ```
 
 Then use the Twilio Python SDK:

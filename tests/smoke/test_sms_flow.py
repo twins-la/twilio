@@ -526,8 +526,8 @@ class TestPersistence:
         """Create data, recreate the app, verify data is still there."""
         import sys
         import os
-        sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "..", "..", "..", "local"))
-        from twins_local.storage_sqlite import SQLiteStorage
+        sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", ".."))
+        from twins_twilio_local.storage_sqlite import SQLiteStorage
         from twins_twilio.app import create_app
 
         db_path = str(tmp_path / "persist_test.db")

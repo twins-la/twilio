@@ -17,9 +17,9 @@ from twins_twilio.app import create_app
 
 import sys
 import os
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "..", "..", "..", "local"))
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", ".."))
 
-from twins_local.storage_sqlite import SQLiteStorage
+from twins_twilio_local.storage_sqlite import SQLiteStorage
 
 
 ADMIN_TOKEN = "test-admin-secret-token"
