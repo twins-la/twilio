@@ -11,6 +11,7 @@ from flask import Blueprint, g, request, current_app
 
 from ..email_auth import require_api_key
 from ..email_errors import email_bad_request, email_sender_not_verified
+from ..logs import emit
 from ..models import now_rfc2822
 from ..sids import generate_email_id
 
@@ -178,15 +179,19 @@ def mail_send():
 
     g.storage.create_email(email_data)
 
-    g.storage.append_log({
-        "tenant_id": tenant_id,
-        "operation": "email.send",
-        "account_sid": g.account_sid,
-        "message_id": message_id,
-        "from_email": from_obj.get("email", ""),
-        "subject": subject,
-        "personalizations_count": len(personalizations),
-    })
+    emit(
+        g.storage,
+        tenant_id=tenant_id,
+        plane="data",
+        operation="email.send",
+        resource={"type": "email", "id": message_id},
+        details={
+            "account_sid": g.account_sid,
+            "from_email": from_obj.get("email", ""),
+            "subject": subject,
+            "personalizations_count": len(personalizations),
+        },
+    )
 
     # Simulate delivery in background
     app = current_app._get_current_object()

@@ -7,6 +7,7 @@ from flask import Blueprint, g, jsonify
 
 from ..auth import require_auth
 from ..errors import not_found
+from ..logs import emit
 from ..models import account_to_json
 
 accounts_bp = Blueprint("accounts", __name__)
@@ -23,10 +24,12 @@ def fetch_account(account_sid):
     if not account:
         return not_found("Account")
 
-    g.storage.append_log({
-        "tenant_id": g.account.get("tenant_id", ""),
-        "operation": "account.fetch",
-        "account_sid": account_sid,
-    })
+    emit(
+        g.storage,
+        tenant_id=g.account["tenant_id"],
+        plane="data",
+        operation="account.fetch",
+        resource={"type": "account", "id": account_sid},
+    )
 
     return jsonify(account_to_json(account, g.base_url))

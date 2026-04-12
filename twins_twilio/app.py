@@ -8,6 +8,8 @@ import logging
 
 from flask import Flask, g
 
+from twins_local.logs import install_correlation_id
+
 from .storage import TwinStorage
 from .routes.accounts import accounts_bp
 from .routes.phone_numbers import phone_numbers_bp
@@ -51,6 +53,10 @@ def create_app(
     app.config["TWIN_BASE_URL"] = base_url
     app.config["TWIN_ADMIN_TOKEN"] = admin_token
     app.config["TWIN_IS_CLOUD"] = is_cloud
+
+    # Stamp every request with a correlation_id so emitted log records
+    # share it (twins-la/LOGGING.md §1.2, §3.2).
+    install_correlation_id(app)
 
     @app.before_request
     def inject_context():

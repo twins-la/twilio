@@ -34,6 +34,7 @@ from twins_local.tenants import (
     reject_default_in_cloud,
 )
 
+from ..logs import emit
 from ..models import account_to_json, account_to_json_public, message_to_json, now_rfc2822
 from ..email_models import email_to_json
 from ..sids import generate_account_sid, generate_auth_token, generate_message_sid, generate_api_key, generate_feedback_id
@@ -181,10 +182,13 @@ def create_tenant():
         friendly_name=friendly_name,
     )
 
-    g.storage.append_log({
-        "tenant_id": tenant_id,
-        "operation": "twin.tenant.create",
-    })
+    emit(
+        g.storage,
+        tenant_id=tenant_id,
+        plane="twin",
+        operation="twin.tenant.create",
+        resource={"type": "tenant", "id": tenant_id},
+    )
 
     resp = jsonify({
         "tenant_id": tenant_id,
@@ -237,11 +241,13 @@ def create_account():
     account.setdefault("date_updated", now)
     account.setdefault("status", "active")
 
-    g.storage.append_log({
-        "tenant_id": g.tenant_id,
-        "operation": "twin.account.create",
-        "account_sid": sid,
-    })
+    emit(
+        g.storage,
+        tenant_id=g.tenant_id,
+        plane="twin",
+        operation="twin.account.create",
+        resource={"type": "account", "id": sid},
+    )
 
     resp = jsonify(account_to_json(account, g.base_url))
     resp.status_code = 201
@@ -299,12 +305,14 @@ def create_api_key():
         name=name or f"Twin API Key {key_id[:8]}",
     )
 
-    g.storage.append_log({
-        "tenant_id": g.tenant_id,
-        "operation": "twin.api_key.create",
-        "account_sid": account_sid,
-        "key_id": key_id,
-    })
+    emit(
+        g.storage,
+        tenant_id=g.tenant_id,
+        plane="twin",
+        operation="twin.api_key.create",
+        resource={"type": "api_key", "id": key_id},
+        details={"account_sid": account_sid},
+    )
 
     resp = jsonify({
         "api_key": full_key,
@@ -355,12 +363,14 @@ def create_verified_sender():
         name=name,
     )
 
-    g.storage.append_log({
-        "tenant_id": g.tenant_id,
-        "operation": "twin.verified_sender.create",
-        "account_sid": account_sid,
-        "email": email,
-    })
+    emit(
+        g.storage,
+        tenant_id=g.tenant_id,
+        plane="twin",
+        operation="twin.verified_sender.create",
+        resource={"type": "verified_sender", "id": email},
+        details={"account_sid": account_sid},
+    )
 
     resp = jsonify(sender)
     resp.status_code = 201
@@ -472,15 +482,19 @@ def simulate_inbound_sms():
     }
     g.storage.create_message(msg_data)
 
-    g.storage.append_log({
-        "tenant_id": g.tenant_id,
-        "operation": "twin.simulate.inbound",
-        "account_sid": account["sid"],
-        "message_sid": message_sid,
-        "from": from_number,
-        "to": to_number,
-        "body": body,
-    })
+    emit(
+        g.storage,
+        tenant_id=g.tenant_id,
+        plane="twin",
+        operation="twin.simulate.inbound",
+        resource={"type": "message", "id": message_sid},
+        details={
+            "account_sid": account["sid"],
+            "from": from_number,
+            "to": to_number,
+            "body": body,
+        },
+    )
 
     sms_url = phone_number_record.get("sms_url", "")
     sms_method = phone_number_record.get("sms_method", "POST")
@@ -538,14 +552,18 @@ def simulate_inbound_sms():
                     g.storage.create_message(reply_data)
                     reply_messages.append(reply_data)
 
-                    g.storage.append_log({
-                        "tenant_id": g.tenant_id,
-                        "operation": "message.reply",
-                        "account_sid": account["sid"],
-                        "message_sid": reply_sid,
-                        "in_reply_to": message_sid,
-                        "body": reply_body,
-                    })
+                    emit(
+                        g.storage,
+                        tenant_id=g.tenant_id,
+                        plane="runtime",
+                        operation="message.reply",
+                        resource={"type": "message", "id": reply_sid},
+                        details={
+                            "account_sid": account["sid"],
+                            "in_reply_to": message_sid,
+                            "body": reply_body,
+                        },
+                    )
 
         except Exception:
             logger.exception("Webhook delivery failed during inbound simulation")
@@ -601,12 +619,14 @@ def submit_feedback():
     }
     feedback = g.storage.create_feedback(feedback_data)
 
-    g.storage.append_log({
-        "tenant_id": g.tenant_id,
-        "operation": "twin.feedback.submit",
-        "feedback_id": feedback_id,
-        "category": feedback_data["category"],
-    })
+    emit(
+        g.storage,
+        tenant_id=g.tenant_id,
+        plane="twin",
+        operation="twin.feedback.submit",
+        resource={"type": "feedback", "id": feedback_id},
+        details={"category": feedback_data["category"]},
+    )
 
     return jsonify(feedback), 201
 
@@ -662,11 +682,13 @@ def update_feedback(feedback_id):
 
     feedback = g.storage.update_feedback(feedback_id, updates)
 
-    g.storage.append_log({
-        "tenant_id": _scope_tenant_id(),
-        "operation": "twin.feedback.update",
-        "feedback_id": feedback_id,
-        "status": updates.get("status", ""),
-    })
+    emit(
+        g.storage,
+        tenant_id=_scope_tenant_id(),
+        plane="twin",
+        operation="twin.feedback.update",
+        resource={"type": "feedback", "id": feedback_id},
+        details={"status": updates.get("status", "")},
+    )
 
     return jsonify(feedback)

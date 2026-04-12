@@ -207,7 +207,7 @@ class TestAdminLogAccess:
         resp = admin_client.get("/_twin/logs", headers=admin_headers)
         assert resp.status_code == 200
         logs = resp.get_json()["logs"]
-        tenant_ids = {l["entry"].get("tenant_id") for l in logs}
+        tenant_ids = {l.get("tenant_id") for l in logs}
         assert two_tenants["tid_a"] in tenant_ids
         assert two_tenants["tid_b"] in tenant_ids
 

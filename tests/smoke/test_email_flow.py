@@ -513,7 +513,7 @@ class TestEmailLogging:
         resp = client.get("/_twin/logs", headers=tenant_headers)
         assert resp.status_code == 200
         data = resp.get_json()
-        operations = [log["entry"]["operation"] for log in data["logs"]]
+        operations = [log["operation"] for log in data["logs"]]
         assert "email.send" in operations
 
 

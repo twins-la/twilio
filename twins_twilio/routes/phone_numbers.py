@@ -12,6 +12,7 @@ from flask import Blueprint, g, jsonify, request
 
 from ..auth import require_auth
 from ..errors import bad_request, invalid_phone_number, not_found
+from ..logs import emit
 from ..models import now_rfc2822, phone_number_to_json
 from ..sids import generate_phone_number_sid
 
@@ -90,13 +91,14 @@ def create_phone_number(account_sid):
 
     result = g.storage.create_phone_number(data)
 
-    g.storage.append_log({
-        "tenant_id": tenant_id,
-        "operation": "phone_number.create",
-        "account_sid": account_sid,
-        "phone_number_sid": sid,
-        "phone_number": phone_number,
-    })
+    emit(
+        g.storage,
+        tenant_id=tenant_id,
+        plane="data",
+        operation="phone_number.create",
+        resource={"type": "phone_number", "id": sid},
+        details={"account_sid": account_sid, "phone_number": phone_number},
+    )
 
     resp = jsonify(phone_number_to_json(result, g.base_url))
     resp.status_code = 201
@@ -109,11 +111,13 @@ def list_phone_numbers(account_sid):
     """List all phone numbers for an account."""
     numbers = g.storage.list_phone_numbers(account_sid)
 
-    g.storage.append_log({
-        "tenant_id": g.account.get("tenant_id", ""),
-        "operation": "phone_number.list",
-        "account_sid": account_sid,
-    })
+    emit(
+        g.storage,
+        tenant_id=g.account["tenant_id"],
+        plane="data",
+        operation="phone_number.list",
+        details={"account_sid": account_sid},
+    )
 
     items = [phone_number_to_json(pn, g.base_url) for pn in numbers]
     return jsonify({
@@ -135,12 +139,14 @@ def fetch_phone_number(account_sid, sid):
     if not pn:
         return not_found("IncomingPhoneNumber")
 
-    g.storage.append_log({
-        "tenant_id": g.account.get("tenant_id", ""),
-        "operation": "phone_number.fetch",
-        "account_sid": account_sid,
-        "phone_number_sid": sid,
-    })
+    emit(
+        g.storage,
+        tenant_id=g.account["tenant_id"],
+        plane="data",
+        operation="phone_number.fetch",
+        resource={"type": "phone_number", "id": sid},
+        details={"account_sid": account_sid},
+    )
 
     return jsonify(phone_number_to_json(pn, g.base_url))
 
@@ -158,12 +164,13 @@ def update_phone_number(account_sid, sid):
     if not result:
         return not_found("IncomingPhoneNumber")
 
-    g.storage.append_log({
-        "tenant_id": g.account.get("tenant_id", ""),
-        "operation": "phone_number.update",
-        "account_sid": account_sid,
-        "phone_number_sid": sid,
-        "updates": list(updates.keys()),
-    })
+    emit(
+        g.storage,
+        tenant_id=g.account["tenant_id"],
+        plane="data",
+        operation="phone_number.update",
+        resource={"type": "phone_number", "id": sid},
+        details={"account_sid": account_sid, "updated_fields": list(updates.keys())},
+    )
 
     return jsonify(phone_number_to_json(result, g.base_url))

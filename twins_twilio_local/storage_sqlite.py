@@ -698,14 +698,18 @@ class SQLiteStorage(TwinStorage):
     # -- Logs --
 
     def append_log(self, entry: dict) -> None:
-        now = datetime.now(timezone.utc).isoformat()
+        # entry is a normative record (twins-la/LOGGING.md §3.2) built via
+        # twins_local.logs.build_log_record(). The columns `timestamp` and
+        # `tenant_id` mirror the record's values for indexing / filtering;
+        # the canonical record lives in the JSON blob.
         tenant_id = entry.get("tenant_id", "")
+        timestamp = entry.get("timestamp", datetime.now(timezone.utc).isoformat())
         with self._lock:
             conn = self._get_conn()
             try:
                 conn.execute(
                     "INSERT INTO logs (timestamp, entry, tenant_id) VALUES (?, ?, ?)",
-                    (now, json.dumps(entry), tenant_id),
+                    (timestamp, json.dumps(entry), tenant_id),
                 )
                 conn.commit()
             finally:
@@ -721,19 +725,16 @@ class SQLiteStorage(TwinStorage):
         try:
             if tenant_id is not None:
                 rows = conn.execute(
-                    "SELECT * FROM logs WHERE tenant_id = ? ORDER BY id DESC LIMIT ? OFFSET ?",
+                    "SELECT id, entry FROM logs WHERE tenant_id = ? ORDER BY id DESC LIMIT ? OFFSET ?",
                     (tenant_id, limit, offset),
                 ).fetchall()
             else:
                 rows = conn.execute(
-                    "SELECT * FROM logs ORDER BY id DESC LIMIT ? OFFSET ?",
+                    "SELECT id, entry FROM logs ORDER BY id DESC LIMIT ? OFFSET ?",
                     (limit, offset),
                 ).fetchall()
-            result = []
-            for row in rows:
-                d = self._row_to_dict(row)
-                d["entry"] = json.loads(d["entry"])
-                result.append(d)
-            return result
+            # Return normative record flat, with `id` as the pagination envelope
+            # (LOGGING.md §3.3 — id does not alter the normative shape).
+            return [{"id": row["id"], **json.loads(row["entry"])} for row in rows]
         finally:
             conn.close()

@@ -152,7 +152,7 @@ class TestFeedbackLogging:
         client.post("/_twin/feedback", headers=tenant_headers, json={"body": "Log test"})
         resp = client.get("/_twin/logs", headers=tenant_headers)
         logs = resp.get_json()["logs"]
-        feedback_logs = [l for l in logs if l["entry"].get("operation") == "twin.feedback.submit"]
+        feedback_logs = [l for l in logs if l.get("operation") == "twin.feedback.submit"]
         assert len(feedback_logs) >= 1
 
 
@@ -197,7 +197,7 @@ class TestTenantIsolation:
 
         resp = client.get("/_twin/logs", headers=headers_b)
         logs = resp.get_json()["logs"]
-        a_logs = [l for l in logs if l["entry"].get("tenant_id") == tid_a]
+        a_logs = [l for l in logs if l.get("tenant_id") == tid_a]
         assert len(a_logs) == 0
 
     def test_accounts_returns_only_own(self, client, tenant_store):

@@ -15,6 +15,7 @@ import re
 
 from ..auth import require_auth
 from ..errors import missing_to, missing_from, missing_body, invalid_to_number, not_found
+from ..logs import emit
 from ..models import message_to_json, now_rfc2822
 from ..sids import generate_message_sid
 from ..webhooks import deliver_status_callback
@@ -117,16 +118,20 @@ def create_message(account_sid):
 
     result = g.storage.create_message(msg_data)
 
-    g.storage.append_log({
-        "tenant_id": tenant_id,
-        "operation": "message.create",
-        "account_sid": account_sid,
-        "message_sid": sid,
-        "to": to,
-        "from": from_number,
-        "body": body,
-        "direction": "outbound-api",
-    })
+    emit(
+        g.storage,
+        tenant_id=tenant_id,
+        plane="data",
+        operation="message.create",
+        resource={"type": "message", "id": sid},
+        details={
+            "account_sid": account_sid,
+            "to": to,
+            "from": from_number,
+            "body": body,
+            "direction": "outbound-api",
+        },
+    )
 
     # Simulate delivery in background
     app = current_app._get_current_object()
@@ -156,11 +161,13 @@ def list_messages(account_sid):
 
     messages = g.storage.list_messages(account_sid, filters if filters else None)
 
-    g.storage.append_log({
-        "tenant_id": g.account.get("tenant_id", ""),
-        "operation": "message.list",
-        "account_sid": account_sid,
-    })
+    emit(
+        g.storage,
+        tenant_id=g.account["tenant_id"],
+        plane="data",
+        operation="message.list",
+        details={"account_sid": account_sid, "filters": filters or {}},
+    )
 
     items = [message_to_json(m, g.base_url) for m in messages]
     return jsonify({
@@ -182,11 +189,13 @@ def fetch_message(account_sid, sid):
     if not msg:
         return not_found("Message")
 
-    g.storage.append_log({
-        "tenant_id": g.account.get("tenant_id", ""),
-        "operation": "message.fetch",
-        "account_sid": account_sid,
-        "message_sid": sid,
-    })
+    emit(
+        g.storage,
+        tenant_id=g.account["tenant_id"],
+        plane="data",
+        operation="message.fetch",
+        resource={"type": "message", "id": sid},
+        details={"account_sid": account_sid},
+    )
 
     return jsonify(message_to_json(msg, g.base_url))
