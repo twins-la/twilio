@@ -51,6 +51,3 @@ message = client.messages.create(
 )
 ```
 
-## Version
-
-0.1.0
