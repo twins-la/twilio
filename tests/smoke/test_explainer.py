@@ -1,5 +1,15 @@
 """Smoke tests for the explainer page and agent instructions."""
 
+from twins_local.testing import assert_no_html_entity_in_css_content
+
+
+def test_explainer_has_no_html_entities_inside_css_content(client):
+    """Sweep-style class check (Job 022): catches the entity-in-CSS-content
+    bug class that shipped in Job 020 / fixed in Job 021 for telegram. Now
+    enforced sibling-wide via twins_local.testing.
+    """
+    assert_no_html_entity_in_css_content(client.get("/").get_data(as_text=True))
+
 
 class TestExplainerPage:
     """Test the root explainer page."""
