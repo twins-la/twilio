@@ -91,3 +91,17 @@ def invalid_phone_number(number: str = ""):
     """400 — code 21421: Phone Number is invalid."""
     msg = f"The phone number '{number}' is not valid" if number else "Phone Number is invalid"
     return error_response(400, 21421, msg)
+
+
+# -- Opt-out errors (216xx) --
+
+def opted_out_recipient(number: str):
+    """400 — code 21610: Attempt to send to unsubscribed recipient.
+
+    Real Twilio rejects outbound messages to a recipient who has previously
+    sent STOP, STOPALL, UNSUBSCRIBE, CANCEL, END, or QUIT.
+    """
+    return error_response(
+        400, 21610,
+        f"Attempt to send to unsubscribed recipient: {number}",
+    )

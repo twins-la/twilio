@@ -10,9 +10,44 @@ Exercises the full Twilio SMS scenario:
 """
 
 import base64
+import threading
 import time
+from http.server import BaseHTTPRequestHandler, HTTPServer
+from urllib.parse import parse_qs
 
 import pytest
+
+
+class _CapturingHandler(BaseHTTPRequestHandler):
+    """Local HTTP server that records the inbound request and replies as configured."""
+
+    captured = []
+    response_status = 200
+    response_body = ""
+
+    def do_POST(self):  # noqa: N802 — stdlib API
+        length = int(self.headers.get("Content-Length", "0"))
+        body = self.rfile.read(length).decode("utf-8") if length else ""
+        _CapturingHandler.captured.append(
+            {"path": self.path, "headers": dict(self.headers), "body": body}
+        )
+        self.send_response(_CapturingHandler.response_status)
+        self.end_headers()
+        if _CapturingHandler.response_body:
+            self.wfile.write(_CapturingHandler.response_body.encode("utf-8"))
+
+    def log_message(self, *_args, **_kwargs):  # silence
+        return
+
+
+def _start_capture_server(status=200, body=""):
+    _CapturingHandler.captured = []
+    _CapturingHandler.response_status = status
+    _CapturingHandler.response_body = body
+    server = HTTPServer(("127.0.0.1", 0), _CapturingHandler)
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    return server, thread
 
 
 class TestAccountCreation:
@@ -368,7 +403,10 @@ class TestInboundSMS:
         assert data["message"]["sid"].startswith("SM")
         assert data["message"]["status"] == "received"
         assert data["message"]["direction"] == "inbound"
-        assert data["webhook_delivered"] is False
+        assert data["webhook"]["webhook_delivered"] is False
+        assert data["webhook"]["webhook_url"] == ""
+        assert data["webhook"]["reason"] is None
+        assert data["webhook"]["status_code"] is None
 
     def test_simulate_inbound_unknown_number(self, client, account, auth_headers, tenant_headers):
         resp = client.post("/_twin/simulate/inbound",
@@ -380,6 +418,192 @@ class TestInboundSMS:
             },
         )
         assert resp.status_code == 404
+
+    def _provision_number_with_webhook(self, client, account, auth_headers, number, sms_url):
+        """Helper: provision a phone number and configure its sms_url."""
+        resp = client.post(
+            f"/2010-04-01/Accounts/{account['sid']}/IncomingPhoneNumbers.json",
+            headers=auth_headers,
+            data={"PhoneNumber": number, "SmsUrl": sms_url, "SmsMethod": "POST"},
+        )
+        assert resp.status_code in (200, 201), resp.get_data(as_text=True)
+        return resp.get_json()
+
+    def test_simulate_inbound_webhook_delivers_to_url(
+        self, client, account, auth_headers, tenant_headers
+    ):
+        server, _thread = _start_capture_server(status=200, body="")
+        try:
+            port = server.server_address[1]
+            url = f"http://127.0.0.1:{port}/sms"
+            self._provision_number_with_webhook(
+                client, account, auth_headers, "+15551112222", url
+            )
+
+            resp = client.post(
+                "/_twin/simulate/inbound",
+                headers=tenant_headers,
+                json={
+                    "account_sid": account["sid"],
+                    "from": "+15559876543",
+                    "to": "+15551112222",
+                    "body": "Hello twin!",
+                },
+            )
+            assert resp.status_code == 201
+            data = resp.get_json()
+            assert data["webhook"]["webhook_delivered"] is True
+            assert data["webhook"]["webhook_url"] == url
+            assert data["webhook"]["status_code"] == 200
+            assert data["webhook"]["reason"] is None
+        finally:
+            server.shutdown()
+            server.server_close()
+
+        captured = _CapturingHandler.captured
+        assert len(captured) == 1
+        assert captured[0]["path"] == "/sms"
+        assert captured[0]["headers"].get("X-Twilio-Signature")
+        assert captured[0]["headers"].get("Content-Type") == "application/x-www-form-urlencoded"
+        params = {k: v[0] for k, v in parse_qs(captured[0]["body"]).items()}
+        assert params["From"] == "+15559876543"
+        assert params["To"] == "+15551112222"
+        assert params["Body"] == "Hello twin!"
+        assert params["AccountSid"] == account["sid"]
+        assert params["MessageSid"].startswith("SM")
+
+    def test_simulate_inbound_webhook_returns_500(
+        self, client, account, auth_headers, tenant_headers
+    ):
+        server, _thread = _start_capture_server(status=500, body="oops")
+        try:
+            port = server.server_address[1]
+            url = f"http://127.0.0.1:{port}/sms"
+            self._provision_number_with_webhook(
+                client, account, auth_headers, "+15553334444", url
+            )
+
+            resp = client.post(
+                "/_twin/simulate/inbound",
+                headers=tenant_headers,
+                json={
+                    "account_sid": account["sid"],
+                    "from": "+15559876543",
+                    "to": "+15553334444",
+                    "body": "Hi",
+                },
+            )
+            assert resp.status_code == 201
+            data = resp.get_json()
+            assert data["webhook"]["webhook_delivered"] is False
+            assert data["webhook"]["status_code"] == 500
+            assert data["webhook"]["reason"] is not None
+            assert "500" in data["webhook"]["reason"]
+            assert data["replies"] == []
+        finally:
+            server.shutdown()
+            server.server_close()
+
+    def test_simulate_inbound_webhook_unreachable(
+        self, client, account, auth_headers, tenant_headers
+    ):
+        # Bind+immediately-close to obtain a port that is now refused.
+        import socket
+        s = socket.socket()
+        s.bind(("127.0.0.1", 0))
+        port = s.getsockname()[1]
+        s.close()
+        url = f"http://127.0.0.1:{port}/sms"
+        self._provision_number_with_webhook(
+            client, account, auth_headers, "+15555556666", url
+        )
+
+        resp = client.post(
+            "/_twin/simulate/inbound",
+            headers=tenant_headers,
+            json={
+                "account_sid": account["sid"],
+                "from": "+15559876543",
+                "to": "+15555556666",
+                "body": "Hi",
+            },
+        )
+        assert resp.status_code == 201
+        data = resp.get_json()
+        assert data["webhook"]["webhook_delivered"] is False
+        assert data["webhook"]["status_code"] is None
+        assert data["webhook"]["reason"] is not None
+        assert "unreachable" in data["webhook"]["reason"].lower()
+
+    def test_simulate_inbound_with_twiml_reply(
+        self, client, account, auth_headers, tenant_headers
+    ):
+        twiml = "<?xml version=\"1.0\" encoding=\"UTF-8\"?><Response><Message>auto-reply</Message></Response>"
+        server, _thread = _start_capture_server(status=200, body=twiml)
+        try:
+            port = server.server_address[1]
+            url = f"http://127.0.0.1:{port}/sms"
+            self._provision_number_with_webhook(
+                client, account, auth_headers, "+15557778888", url
+            )
+
+            resp = client.post(
+                "/_twin/simulate/inbound",
+                headers=tenant_headers,
+                json={
+                    "account_sid": account["sid"],
+                    "from": "+15559876543",
+                    "to": "+15557778888",
+                    "body": "Hi",
+                },
+            )
+            assert resp.status_code == 201
+            data = resp.get_json()
+            assert data["webhook"]["webhook_delivered"] is True
+            assert len(data["replies"]) == 1
+            assert data["replies"][0]["body"] == "auto-reply"
+            assert data["replies"][0]["direction"] == "outbound-reply"
+        finally:
+            server.shutdown()
+            server.server_close()
+
+    def test_simulate_inbound_emits_webhook_send_log(
+        self, client, account, auth_headers, tenant_headers
+    ):
+        """Inbound webhook attempts emit a runtime.webhook.send.inbound log
+        with the consumer's HTTP outcome."""
+        server, _thread = _start_capture_server(status=500, body="")
+        try:
+            port = server.server_address[1]
+            url = f"http://127.0.0.1:{port}/sms"
+            self._provision_number_with_webhook(
+                client, account, auth_headers, "+15558889999", url
+            )
+            client.post(
+                "/_twin/simulate/inbound",
+                headers=tenant_headers,
+                json={
+                    "account_sid": account["sid"],
+                    "from": "+15559876543",
+                    "to": "+15558889999",
+                    "body": "Hi",
+                },
+            )
+        finally:
+            server.shutdown()
+            server.server_close()
+
+        logs = client.get("/_twin/logs", headers=tenant_headers).get_json()["logs"]
+        deliver_logs = [r for r in logs if r["operation"] == "runtime.webhook.send.inbound"]
+        assert len(deliver_logs) == 1
+        rec = deliver_logs[0]
+        assert rec["plane"] == "runtime"
+        assert rec["outcome"] == "failure"
+        assert rec["reason"] and "500" in rec["reason"]
+        assert rec["details"]["status_code"] == 500
+        assert rec["details"]["url"] == url
+        assert rec["details"]["http_method"] == "POST"
+        assert rec["details"]["url_host"].endswith(f":{port}")
 
 
 class TestTwinPlane:

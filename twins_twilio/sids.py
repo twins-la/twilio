@@ -28,6 +28,16 @@ def generate_message_sid() -> str:
     return generate_sid("SM")
 
 
+def generate_mms_sid() -> str:
+    """Twilio uses ``MM`` prefix for MMS message SIDs."""
+    return generate_sid("MM")
+
+
+def generate_media_sid() -> str:
+    """Twilio uses ``ME`` prefix for media item SIDs."""
+    return generate_sid("ME")
+
+
 def generate_phone_number_sid() -> str:
     return generate_sid("PN")
 

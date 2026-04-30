@@ -156,6 +156,41 @@ class TwinStorage(ABC):
     def list_verified_senders(self, account_sid: str) -> list[dict]:
         """List all verified senders for an account."""
 
+    # -- Opt-outs (STOP/START state per (account, twilio_number, recipient)) --
+
+    @abstractmethod
+    def set_opt_out(
+        self,
+        *,
+        tenant_id: str,
+        account_sid: str,
+        twilio_number: str,
+        recipient: str,
+    ) -> None:
+        """Record that ``recipient`` has opted out of messages from
+        ``twilio_number`` for ``account_sid``. Idempotent."""
+
+    @abstractmethod
+    def clear_opt_out(
+        self,
+        *,
+        account_sid: str,
+        twilio_number: str,
+        recipient: str,
+    ) -> None:
+        """Remove an opt-out record. Idempotent (no-op if absent)."""
+
+    @abstractmethod
+    def is_opted_out(
+        self,
+        *,
+        account_sid: str,
+        twilio_number: str,
+        recipient: str,
+    ) -> bool:
+        """Check whether ``recipient`` has opted out of messages from
+        ``twilio_number`` for ``account_sid``."""
+
     # -- Logs --
 
     @abstractmethod

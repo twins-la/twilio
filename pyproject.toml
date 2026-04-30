@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "twins-twilio"
-version = "0.2.0"
+version = "0.3.0"
 description = "Twilio SMS digital twin for twins.la"
 requires-python = ">=3.11"
 dependencies = [

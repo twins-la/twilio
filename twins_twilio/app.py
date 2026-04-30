@@ -14,6 +14,7 @@ from .storage import TwinStorage
 from .routes.accounts import accounts_bp
 from .routes.phone_numbers import phone_numbers_bp
 from .routes.messages import messages_bp
+from .routes.media import media_bp
 from .routes.email import email_bp
 from .twin_plane.routes import twin_plane_bp
 from .explainer import explainer_bp
@@ -74,6 +75,9 @@ def create_app(
 
     # Register SendGrid API routes
     app.register_blueprint(email_bp)
+
+    # Register MMS media placeholder route
+    app.register_blueprint(media_bp)
 
     # Register Twin Plane routes
     app.register_blueprint(twin_plane_bp)

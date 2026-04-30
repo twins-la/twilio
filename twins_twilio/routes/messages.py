@@ -6,19 +6,32 @@ GET  /2010-04-01/Accounts/{AccountSid}/Messages/{Sid}.json — Fetch
 """
 
 import logging
+import re
 import threading
 import time
 
-from flask import Blueprint, g, jsonify, request, current_app
+from flask import Blueprint, current_app, g, jsonify, request
 
-import re
+from twins_local.logs import current_correlation_id
 
 from ..auth import require_auth
-from ..errors import missing_to, missing_from, missing_body, invalid_to_number, not_found
+from ..errors import (
+    invalid_to_number,
+    missing_body,
+    missing_from,
+    missing_to,
+    not_found,
+    opted_out_recipient,
+)
 from ..logs import emit
 from ..models import message_to_json, now_rfc2822
 from ..sids import generate_message_sid
-from ..webhooks import deliver_status_callback
+from ..webhooks import (
+    OP_STATUS,
+    WebhookEmitContext,
+    build_status_callback_params,
+    deliver_webhook_async,
+)
 
 # E.164 phone number format
 _E164_PATTERN = re.compile(r"^\+[1-9]\d{1,14}$")
@@ -30,11 +43,14 @@ messages_bp = Blueprint("messages", __name__)
 PREFIX = "/2010-04-01/Accounts/<account_sid>/Messages"
 
 
-def _simulate_delivery(app, storage, msg_data: dict, auth_token: str):
+def _simulate_delivery(
+    app, storage, msg_data: dict, auth_token: str, tenant_id: str, correlation_id: str
+):
     """Simulate message delivery in a background thread.
 
-    Progresses: queued → sending → sent → delivered
-    with small delays to mimic real Twilio behavior.
+    Progresses: queued → sending → sent → delivered with small delays
+    to mimic real Twilio behavior. Each transition fires a status callback
+    if one is registered on the message.
     """
     sid = msg_data["sid"]
     account_sid = msg_data["account_sid"]
@@ -47,27 +63,54 @@ def _simulate_delivery(app, storage, msg_data: dict, auth_token: str):
         ("delivered", 0.3),
     ]
 
+    emit_ctx = WebhookEmitContext(
+        app=app,
+        storage=storage,
+        tenant_id=tenant_id,
+        correlation_id=correlation_id,
+        operation=OP_STATUS,
+        message_sid=sid,
+    )
     with app.app_context():
         g.storage = storage
-        for status, delay in transitions:
-            time.sleep(delay)
-            now = now_rfc2822()
-            updates = {"status": status, "date_updated": now}
-            if status == "sent":
-                updates["date_sent"] = now
-            storage.update_message(account_sid, sid, updates)
+        g.correlation_id = correlation_id
+        try:
+            for status, delay in transitions:
+                time.sleep(delay)
+                now = now_rfc2822()
+                updates = {"status": status, "date_updated": now}
+                if status == "sent":
+                    updates["date_sent"] = now
+                storage.update_message(account_sid, sid, updates)
 
-            if status_callback:
-                deliver_status_callback(
-                    url=status_callback,
-                    method=status_callback_method,
-                    message_sid=sid,
-                    account_sid=account_sid,
-                    from_number=msg_data.get("from_number", ""),
-                    to_number=msg_data.get("to", ""),
-                    status=status,
-                    auth_token=auth_token,
-                )
+                if status_callback:
+                    params = build_status_callback_params(
+                        message_sid=sid,
+                        account_sid=account_sid,
+                        from_number=msg_data.get("from_number", ""),
+                        to_number=msg_data.get("to", ""),
+                        status=status,
+                    )
+                    deliver_webhook_async(
+                        url=status_callback,
+                        method=status_callback_method,
+                        params=params,
+                        auth_token=auth_token,
+                        emit_ctx=emit_ctx,
+                    )
+        except Exception as exc:
+            # Crashing here would silently halt the auto-progression.
+            # Emit a normative failure record so the operator can see why.
+            emit(
+                storage,
+                tenant_id=tenant_id,
+                plane="runtime",
+                operation="runtime.message.progression",
+                resource={"type": "message", "id": sid},
+                outcome="failure",
+                reason=f"progression worker raised: {exc.__class__.__name__}: {exc}",
+                details={"account_sid": account_sid},
+            )
 
 
 @messages_bp.route(f"{PREFIX}.json", methods=["POST"])
@@ -87,9 +130,16 @@ def create_message(account_sid):
     if not body:
         return missing_body()
 
-    # Validate E.164 format for To
     if not _E164_PATTERN.match(to):
         return invalid_to_number(to)
+
+    # Real Twilio rejects messages to recipients who have opted out via STOP.
+    # The twin enforces the same so consumer code that ignores opt-outs is
+    # caught in CI rather than in production carrier complaints.
+    if g.storage.is_opted_out(
+        account_sid=account_sid, twilio_number=from_number, recipient=to
+    ):
+        return opted_out_recipient(to)
 
     sid = generate_message_sid()
     now = now_rfc2822()
@@ -133,13 +183,13 @@ def create_message(account_sid):
         },
     )
 
-    # Simulate delivery in background
     app = current_app._get_current_object()
     storage = g.storage
     auth_token = g.account["auth_token"]
+    correlation_id = current_correlation_id()
     thread = threading.Thread(
         target=_simulate_delivery,
-        args=(app, storage, msg_data, auth_token),
+        args=(app, storage, msg_data, auth_token, tenant_id, correlation_id),
         daemon=True,
     )
     thread.start()

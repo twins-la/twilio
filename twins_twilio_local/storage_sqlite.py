@@ -184,6 +184,19 @@ class SQLiteStorage(TwinStorage):
                     CREATE INDEX IF NOT EXISTS idx_feedback_tenant
                         ON feedback(tenant_id);
 
+                    CREATE TABLE IF NOT EXISTS opt_outs (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT,
+                        tenant_id TEXT NOT NULL,
+                        account_sid TEXT NOT NULL,
+                        twilio_number TEXT NOT NULL,
+                        recipient TEXT NOT NULL,
+                        date_created TEXT NOT NULL,
+                        UNIQUE(account_sid, twilio_number, recipient)
+                    );
+
+                    CREATE INDEX IF NOT EXISTS idx_opt_outs_lookup
+                        ON opt_outs(account_sid, twilio_number, recipient);
+
                     CREATE TABLE IF NOT EXISTS verified_senders (
                         id INTEGER PRIMARY KEY AUTOINCREMENT,
                         tenant_id TEXT NOT NULL,
@@ -692,6 +705,65 @@ class SQLiteStorage(TwinStorage):
                 (account_sid,),
             ).fetchall()
             return [self._row_to_dict(r) for r in rows]
+        finally:
+            conn.close()
+
+    # -- Opt-outs --
+
+    def set_opt_out(
+        self,
+        *,
+        tenant_id: str,
+        account_sid: str,
+        twilio_number: str,
+        recipient: str,
+    ) -> None:
+        now = datetime.now(timezone.utc).isoformat()
+        with self._lock:
+            conn = self._get_conn()
+            try:
+                conn.execute(
+                    "INSERT OR IGNORE INTO opt_outs "
+                    "(tenant_id, account_sid, twilio_number, recipient, date_created) "
+                    "VALUES (?, ?, ?, ?, ?)",
+                    (tenant_id, account_sid, twilio_number, recipient, now),
+                )
+                conn.commit()
+            finally:
+                conn.close()
+
+    def clear_opt_out(
+        self,
+        *,
+        account_sid: str,
+        twilio_number: str,
+        recipient: str,
+    ) -> None:
+        with self._lock:
+            conn = self._get_conn()
+            try:
+                conn.execute(
+                    "DELETE FROM opt_outs WHERE account_sid = ? AND twilio_number = ? AND recipient = ?",
+                    (account_sid, twilio_number, recipient),
+                )
+                conn.commit()
+            finally:
+                conn.close()
+
+    def is_opted_out(
+        self,
+        *,
+        account_sid: str,
+        twilio_number: str,
+        recipient: str,
+    ) -> bool:
+        conn = self._get_conn()
+        try:
+            row = conn.execute(
+                "SELECT 1 FROM opt_outs WHERE account_sid = ? AND twilio_number = ? AND recipient = ? LIMIT 1",
+                (account_sid, twilio_number, recipient),
+            ).fetchone()
+            return row is not None
         finally:
             conn.close()
 

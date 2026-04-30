@@ -51,7 +51,24 @@ Twin Plane (Basic Auth — use AccountSid:AuthToken):
   GET  /_twin/logs               — your operation logs
   POST /_twin/api-keys           — create SendGrid API key
   GET  /_twin/emails             — list your emails
-  POST /_twin/simulate/inbound   — simulate inbound SMS
+  POST /_twin/simulate/inbound   — drive a signed inbound SMS or MMS
+                                   to the phone number's SmsUrl. Body:
+                                   { account_sid, from, to, body,
+                                     num_segments?, num_media?,
+                                     media_urls?, media_content_types? }.
+                                   STOP/START/HELP carrier keywords are
+                                   auto-detected and applied to opt-out
+                                   state; HELP triggers a canned auto-reply.
+  POST /_twin/simulate/status    — force a status transition on a
+                                   tenant-owned outbound message and
+                                   fire its StatusCallback. Body:
+                                   { message_sid, status, error_code?,
+                                     error_message? }. Status is one of
+                                   queued | sending | sent | delivered |
+                                   failed | undelivered. error_code is
+                                   required for failed and undelivered.
+  GET  /_twin/media/<media_sid>  — placeholder PNG for MMS scenarios
+                                   (twin-served, unauthenticated)
   POST /_twin/feedback           — submit feedback
   GET  /_twin/feedback           — list your feedback
 
@@ -87,6 +104,24 @@ SendGrid Email API (Bearer Auth):
 3. Check logs (same credentials work for Twin Plane):
    curl https://twilio.twins.la/_twin/logs \\
      -u "{sid}:{auth_token}"
+
+4. Drive a signed inbound SMS against your registered SmsUrl (CI/smoke):
+   curl -X POST https://twilio.twins.la/_twin/simulate/inbound \\
+     -u "{sid}:{auth_token}" \\
+     -H "Content-Type: application/json" \\
+     -d '{"account_sid":"{sid}","from":"+15559876543","to":"+15551112222","body":"hi"}'
+
+   The twin POSTs urlencoded form data to your SmsUrl with a valid
+   X-Twilio-Signature header computed against the *exact* registered URL.
+   Consumers that rebuild the request URL incorrectly behind a proxy
+   (e.g., ignoring X-Forwarded-Proto) will fail signature validation —
+   that is the bug class this control endpoint is designed to surface.
+
+5. Force a delivery failure status and fire StatusCallback:
+   curl -X POST https://twilio.twins.la/_twin/simulate/status \\
+     -u "{sid}:{auth_token}" \\
+     -H "Content-Type: application/json" \\
+     -d '{"message_sid":"SM...","status":"failed","error_code":30003}'
 
 ## Local Usage
 
