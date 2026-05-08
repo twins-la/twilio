@@ -20,6 +20,32 @@ def now_rfc2822() -> str:
     return _rfc2822(_now())
 
 
+def _nullable_str(value):
+    """Normalize a documented-nullable string field to ``None`` when unset.
+
+    Storage backends and upstream code paths represent "unset" inconsistently
+    (``None``, missing key, or the empty string). The Twilio wire contract
+    declares these fields as ``string | null`` — empty strings are not part
+    of the documented shape and break SDKs that decode to ``str | None``.
+    """
+    if value is None or value == "":
+        return None
+    return value
+
+
+def _nullable_int(value):
+    """Normalize a documented-nullable integer field (e.g. ``error_code``).
+
+    Real Twilio emits ``error_code`` as ``integer | null``. Storage may carry
+    it as a string, an int, ``None``, or ``""`` depending on the backend.
+    """
+    if value is None or value == "":
+        return None
+    if isinstance(value, int):
+        return value
+    return int(value)
+
+
 def account_to_json(account: dict, base_url: str) -> dict:
     """Convert a stored account to Twilio Account JSON response."""
     sid = account["sid"]
@@ -66,8 +92,8 @@ def phone_number_to_json(pn: dict, base_url: str) -> dict:
         "sms_fallback_method": pn.get("sms_fallback_method", "POST"),
         "status_callback": pn.get("status_callback", ""),
         "status_callback_method": pn.get("status_callback_method", "POST"),
-        "voice_application_sid": pn.get("voice_application_sid", ""),
-        "sms_application_sid": pn.get("sms_application_sid", ""),
+        "voice_application_sid": _nullable_str(pn.get("voice_application_sid")),
+        "sms_application_sid": _nullable_str(pn.get("sms_application_sid")),
         "capabilities": {
             "voice": False,
             "sms": True,
@@ -99,12 +125,12 @@ def message_to_json(msg: dict, base_url: str) -> dict:
         "num_segments": str(msg.get("num_segments", "1")),
         "num_media": "0",
         "direction": msg.get("direction", "outbound-api"),
-        "price": msg.get("price"),
+        "price": _nullable_str(msg.get("price")),
         "price_unit": "USD",
-        "error_code": msg.get("error_code"),
-        "error_message": msg.get("error_message"),
+        "error_code": _nullable_int(msg.get("error_code")),
+        "error_message": _nullable_str(msg.get("error_message")),
         "api_version": "2010-04-01",
-        "messaging_service_sid": msg.get("messaging_service_sid"),
+        "messaging_service_sid": _nullable_str(msg.get("messaging_service_sid")),
         "uri": f"/2010-04-01/Accounts/{account_sid}/Messages/{sid}.json",
         "subresource_uris": {
             "media": f"/2010-04-01/Accounts/{account_sid}/Messages/{sid}/Media.json",
