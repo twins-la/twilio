@@ -71,12 +71,25 @@ def _simulate_delivery(
         operation=OP_STATUS,
         message_sid=sid,
     )
+    # Statuses that real Twilio considers terminal — no further automatic
+    # transitions occur once the message reaches one of these. The
+    # progression worker MUST honor this: if a manual `/_twin/simulate/status`
+    # call has moved the message to a terminal state ahead of the worker,
+    # the worker must not clobber it back to "sending"/"sent"/etc. Closes
+    # twins-la/twilio#5 (race between simulate/status and progression worker).
+    terminal_statuses = {"delivered", "failed", "undelivered"}
+
     with app.app_context():
         g.storage = storage
         g.correlation_id = correlation_id
         try:
             for status, delay in transitions:
                 time.sleep(delay)
+                # Re-read current status — a manual simulate/status call may
+                # have moved the message past the worker's next step.
+                current = storage.get_message(account_sid, sid)
+                if current is None or current.get("status") in terminal_statuses:
+                    break
                 now = now_rfc2822()
                 updates = {"status": status, "date_updated": now}
                 if status == "sent":

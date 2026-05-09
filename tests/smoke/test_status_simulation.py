@@ -198,3 +198,56 @@ class TestStatusSimulation:
         data = resp.get_json()
         assert data["status_callback"]["fired"] is False
         assert data["message"]["status"] == "delivered"
+
+    def test_simulate_status_terminal_persists_against_progression_worker(
+        self, client, account, auth_headers, tenant_headers
+    ):
+        """Closes twins-la/twilio#5: the background progression worker
+        (queued → sending → sent → delivered, ~0.6s end-to-end) must NOT
+        clobber a manually-set terminal status (delivered/failed/undelivered).
+        Real Twilio considers those terminal — no further automatic
+        transitions occur.
+
+        Race shape this test prevents: simulate/status sets "delivered"
+        within the worker's first 0.1s sleep window; if the worker doesn't
+        re-check current status before its next update, it overwrites
+        "delivered" with "sending" and the assertion in the previous test
+        fires intermittently.
+
+        Deterministic reproduction: call simulate/status, then wait long
+        enough for the entire worker cycle (0.6s + slack) to complete,
+        then read the message and assert it's still "delivered".
+        """
+        import time
+
+        client.post(
+            f"/2010-04-01/Accounts/{account['sid']}/IncomingPhoneNumbers.json",
+            headers=auth_headers,
+            data={"PhoneNumber": "+15551112333"},
+        )
+        resp = client.post(
+            f"/2010-04-01/Accounts/{account['sid']}/Messages.json",
+            headers=auth_headers,
+            data={"To": "+15559876544", "From": "+15551112333", "Body": "race-fix"},
+        )
+        msg = resp.get_json()
+
+        # Set terminal status BEFORE the worker has had time to progress.
+        resp = client.post(
+            "/_twin/simulate/status",
+            headers=tenant_headers,
+            json={"message_sid": msg["sid"], "status": "delivered"},
+        )
+        assert resp.status_code == 200
+
+        # Wait past the worker's full transition window (0.1 + 0.2 + 0.3 = 0.6s).
+        time.sleep(1.0)
+
+        # Read back: status MUST still be "delivered". If the worker
+        # clobbered it, this assertion fires.
+        resp = client.get(
+            f"/2010-04-01/Accounts/{account['sid']}/Messages/{msg['sid']}.json",
+            headers=auth_headers,
+        )
+        assert resp.status_code == 200
+        assert resp.get_json()["status"] == "delivered"
