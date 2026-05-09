@@ -12,6 +12,7 @@ from twins_local.logs import install_correlation_id
 
 from .storage import TwinStorage
 from .routes.accounts import accounts_bp
+from .routes.api_data import api_data_bp
 from .routes.phone_numbers import phone_numbers_bp
 from .routes.messages import messages_bp
 from .routes.media import media_bp
@@ -84,6 +85,11 @@ def create_app(
 
     # Register explainer page and agent instructions
     app.register_blueprint(explainer_bp)
+
+    # Catch-all for unimplemented /<api_version>/Accounts/... paths —
+    # registered LAST so specific routes (Messages, IncomingPhoneNumbers,
+    # etc.) take precedence. Closes twins-la/twins-la#2.
+    app.register_blueprint(api_data_bp)
 
     logger.info("Twilio twin created — base_url=%s cloud=%s", base_url, is_cloud)
     return app
