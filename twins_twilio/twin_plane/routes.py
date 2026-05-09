@@ -504,30 +504,62 @@ def _resolve_media(num_media: int, supplied_urls, supplied_types):
     return urls[:num_media], types[:num_media]
 
 
+_INBOUND_KEY_ALIASES = {
+    "AccountSid": "account_sid",
+    "From": "from",
+    "To": "to",
+    "Body": "body",
+    "NumSegments": "num_segments",
+    "NumMedia": "num_media",
+    "MediaUrls": "media_urls",
+    "MediaContentTypes": "media_content_types",
+}
+
+
+def _normalize_inbound_keys(payload):
+    """Accept either lowercase (Twin Plane convention) or CamelCase (Twilio
+    outgoing-webhook shape) keys for ``simulate/inbound``. Lowercase wins on
+    conflict — the Twin Plane is the canonical surface and CamelCase is the
+    convenience alias for operators copying real-Twilio payloads. Closes
+    twins-la/twilio#4.
+    """
+    if not isinstance(payload, dict):
+        return payload
+    out = dict(payload)
+    for camel, snake in _INBOUND_KEY_ALIASES.items():
+        if camel in out:
+            if snake not in out:
+                out[snake] = out[camel]
+            del out[camel]
+    return out
+
+
 @twin_plane_bp.route("/simulate/inbound", methods=["POST"])
 @require_tenant
 def simulate_inbound_sms():
     """Simulate an inbound SMS or MMS for an account inside the tenant.
 
-    Required JSON body:
-        account_sid: The destination account on the tenant.
-        from: sender phone number
-        to: destination phone number (must be provisioned on the account)
-        body: message text
+    Required JSON body (lowercase or CamelCase accepted; lowercase wins
+    on conflict):
+        account_sid / AccountSid: The destination account on the tenant.
+        from / From: sender phone number
+        to / To: destination phone number (must be provisioned on the account)
+        body / Body: message text
 
     Optional JSON body:
-        num_segments: Carrier-reported segment count (default "1").
-        num_media: Number of media items (>=0, default 0). When >0 the
-            recorded message uses an MM-prefix SID and the webhook payload
+        num_segments / NumSegments: Carrier-reported segment count (default "1").
+        num_media / NumMedia: Number of media items (>=0, default 0). When >0
+            the recorded message uses an MM-prefix SID and the webhook payload
             includes MediaUrl0/MediaContentType0/...
-        media_urls: Operator-supplied media URLs. Slots not supplied are
-            filled with twin-served placeholder URLs.
-        media_content_types: MIME types aligned with media_urls.
+        media_urls / MediaUrls: Operator-supplied media URLs. Slots not
+            supplied are filled with twin-served placeholder URLs.
+        media_content_types / MediaContentTypes: MIME types aligned with
+            media_urls.
     """
     if not request.is_json:
         return jsonify({"error": "JSON body required"}), 400
 
-    data = request.json
+    data = _normalize_inbound_keys(request.json)
     account_sid = data.get("account_sid")
     from_number = data.get("from")
     to_number = data.get("to")

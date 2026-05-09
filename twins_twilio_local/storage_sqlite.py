@@ -37,6 +37,27 @@ _VALID_FEEDBACK_COLUMNS = frozenset({
     "status", "date_updated",
 })
 
+# Storage-layer null-shape (defense-in-depth — closes twins-la/twilio#2).
+# Per Twilio API documentation these fields are `<type> | null`. The wire
+# serializer in twins_twilio.models maps `""` → `None` on read, but storage
+# must persist `None` directly so any caller bypassing the serializer
+# (admin export, debug endpoint, future resource) sees the same shape.
+_MESSAGE_NULLABLE_KEYS = frozenset({
+    "price", "error_code", "error_message", "messaging_service_sid",
+})
+_PHONE_NUMBER_NULLABLE_KEYS = frozenset({
+    "voice_url", "voice_fallback_url", "sms_url", "sms_fallback_url",
+    "status_callback", "voice_application_sid", "sms_application_sid",
+})
+
+
+def _resolve_default(key: str, value, nullable_keys: frozenset[str]):
+    """Per-key default: ``None`` for nullable keys when value is None or '';
+    ``""`` for non-nullable keys when value is None; passthrough otherwise."""
+    if key in nullable_keys:
+        return None if (value is None or value == "") else value
+    return "" if value is None else value
+
 
 class SQLiteStorage(TwinStorage):
     """SQLite-backed storage for the Twilio twin.
@@ -80,17 +101,17 @@ class SQLiteStorage(TwinStorage):
                         account_sid TEXT NOT NULL,
                         phone_number TEXT NOT NULL,
                         friendly_name TEXT NOT NULL DEFAULT '',
-                        sms_url TEXT NOT NULL DEFAULT '',
+                        sms_url TEXT,
                         sms_method TEXT NOT NULL DEFAULT 'POST',
-                        sms_fallback_url TEXT NOT NULL DEFAULT '',
+                        sms_fallback_url TEXT,
                         sms_fallback_method TEXT NOT NULL DEFAULT 'POST',
-                        sms_application_sid TEXT NOT NULL DEFAULT '',
-                        voice_url TEXT NOT NULL DEFAULT '',
+                        sms_application_sid TEXT,
+                        voice_url TEXT,
                         voice_method TEXT NOT NULL DEFAULT 'POST',
-                        voice_fallback_url TEXT NOT NULL DEFAULT '',
+                        voice_fallback_url TEXT,
                         voice_fallback_method TEXT NOT NULL DEFAULT 'POST',
-                        voice_application_sid TEXT NOT NULL DEFAULT '',
-                        status_callback TEXT NOT NULL DEFAULT '',
+                        voice_application_sid TEXT,
+                        status_callback TEXT,
                         status_callback_method TEXT NOT NULL DEFAULT 'POST',
                         date_created TEXT NOT NULL,
                         date_updated TEXT NOT NULL,
@@ -212,8 +233,68 @@ class SQLiteStorage(TwinStorage):
                         ON verified_senders(account_sid);
                 """)
                 conn.commit()
+                self._migrate_phone_numbers_nullable_cols(conn)
             finally:
                 conn.close()
+
+    def _migrate_phone_numbers_nullable_cols(self, conn: sqlite3.Connection) -> None:
+        """Drop NOT NULL on the 7 documented-nullable phone_numbers columns
+        (defense-in-depth — closes twins-la/twilio#2). SQLite has no
+        ALTER COLUMN DROP NOT NULL, so we recreate-and-copy. Idempotent —
+        runs only when the old schema is detected. Existing rows with
+        '' in these columns are migrated to NULL via NULLIF.
+        """
+        cur = conn.execute("PRAGMA table_info(phone_numbers)")
+        col_notnull = {row[1]: row[3] for row in cur.fetchall()}
+        if not any(col_notnull.get(c) == 1 for c in _PHONE_NUMBER_NULLABLE_KEYS):
+            return  # already migrated
+
+        conn.executescript("""
+            PRAGMA foreign_keys=OFF;
+            BEGIN TRANSACTION;
+            CREATE TABLE phone_numbers_new (
+                sid TEXT PRIMARY KEY,
+                tenant_id TEXT NOT NULL,
+                account_sid TEXT NOT NULL,
+                phone_number TEXT NOT NULL,
+                friendly_name TEXT NOT NULL DEFAULT '',
+                sms_url TEXT,
+                sms_method TEXT NOT NULL DEFAULT 'POST',
+                sms_fallback_url TEXT,
+                sms_fallback_method TEXT NOT NULL DEFAULT 'POST',
+                sms_application_sid TEXT,
+                voice_url TEXT,
+                voice_method TEXT NOT NULL DEFAULT 'POST',
+                voice_fallback_url TEXT,
+                voice_fallback_method TEXT NOT NULL DEFAULT 'POST',
+                voice_application_sid TEXT,
+                status_callback TEXT,
+                status_callback_method TEXT NOT NULL DEFAULT 'POST',
+                date_created TEXT NOT NULL,
+                date_updated TEXT NOT NULL,
+                FOREIGN KEY (account_sid) REFERENCES accounts(sid)
+            );
+            INSERT INTO phone_numbers_new
+                SELECT
+                    sid, tenant_id, account_sid, phone_number, friendly_name,
+                    NULLIF(sms_url, ''), sms_method,
+                    NULLIF(sms_fallback_url, ''), sms_fallback_method,
+                    NULLIF(sms_application_sid, ''),
+                    NULLIF(voice_url, ''), voice_method,
+                    NULLIF(voice_fallback_url, ''), voice_fallback_method,
+                    NULLIF(voice_application_sid, ''),
+                    NULLIF(status_callback, ''), status_callback_method,
+                    date_created, date_updated
+                FROM phone_numbers;
+            DROP TABLE phone_numbers;
+            ALTER TABLE phone_numbers_new RENAME TO phone_numbers;
+            CREATE INDEX IF NOT EXISTS idx_phone_numbers_account
+                ON phone_numbers(account_sid);
+            CREATE INDEX IF NOT EXISTS idx_phone_numbers_number
+                ON phone_numbers(account_sid, phone_number);
+            COMMIT;
+            PRAGMA foreign_keys=ON;
+        """)
 
     def _row_to_dict(self, row: sqlite3.Row) -> dict:
         return dict(row)
@@ -276,7 +357,7 @@ class SQLiteStorage(TwinStorage):
             "status_callback", "status_callback_method",
             "date_created", "date_updated",
         ]
-        values = [data.get(c, "") for c in cols]
+        values = [_resolve_default(c, data.get(c), _PHONE_NUMBER_NULLABLE_KEYS) for c in cols]
         placeholders = ", ".join(["?"] * len(cols))
         col_names = ", ".join(cols)
 
@@ -367,7 +448,7 @@ class SQLiteStorage(TwinStorage):
             "num_segments", "price", "error_code", "error_message",
             "messaging_service_sid", "status_callback", "status_callback_method",
         ]
-        values = [data.get(k, "") for k in keys]
+        values = [_resolve_default(k, data.get(k), _MESSAGE_NULLABLE_KEYS) for k in keys]
         placeholders = ", ".join(["?"] * len(cols))
         col_names = ", ".join(cols)
 

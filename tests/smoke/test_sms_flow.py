@@ -404,7 +404,10 @@ class TestInboundSMS:
         assert data["message"]["status"] == "received"
         assert data["message"]["direction"] == "inbound"
         assert data["webhook"]["webhook_delivered"] is False
-        assert data["webhook"]["webhook_url"] == ""
+        # No sms_url configured on the phone number → webhook_url is null,
+        # matching the documented IncomingPhoneNumber `<type> | null` shape
+        # and the storage-layer null-shape closure (twins-la/twilio#2/#3).
+        assert data["webhook"]["webhook_url"] is None
         assert data["webhook"]["reason"] is None
         assert data["webhook"]["status_code"] is None
 
