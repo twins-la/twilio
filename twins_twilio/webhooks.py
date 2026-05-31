@@ -43,6 +43,9 @@ logger = logging.getLogger(__name__)
 
 WEBHOOK_TIMEOUT_SECONDS = 15
 
+# Upper bound on the webhook response body we read/parse/store as TwiML.
+MAX_TWIML_BYTES = 65_536
+
 # Operations recognized by ``runtime.webhook.send.*`` log entries.
 OP_INBOUND = "runtime.webhook.send.inbound"
 OP_STATUS = "runtime.webhook.send.status"
@@ -200,7 +203,11 @@ def _send_request(
         return (False, f"webhook delivery raised: {exc.__class__.__name__}", None, None)
 
     if 200 <= resp.status_code < 300:
-        return (True, None, resp.status_code, resp.text)
+        # Cap the response body before it is parsed/stored: a hostile webhook
+        # target could otherwise return an unbounded payload.
+        raw = resp.content[:MAX_TWIML_BYTES]
+        response_text = raw.decode("utf-8", errors="replace")
+        return (True, None, resp.status_code, response_text)
     return (False, f"webhook target returned HTTP {resp.status_code}", resp.status_code, None)
 
 

@@ -5,7 +5,9 @@ Only supports the <Message> verb for 0.1.0 (SMS scenario).
 """
 
 import logging
-import xml.etree.ElementTree as ET
+
+import defusedxml.ElementTree as ET
+from defusedxml.common import DefusedXmlException
 
 logger = logging.getLogger(__name__)
 
@@ -36,7 +38,9 @@ def parse_message_response(twiml_text: str) -> list[str]:
                 # Direct text content in <Message>
                 messages.append(msg_elem.text.strip())
 
-    except ET.ParseError:
+    except (ET.ParseError, DefusedXmlException):
+        # DefusedXmlException covers entity-expansion / DTD / external-ref
+        # payloads (billion-laughs); treat them as an unparseable response.
         logger.warning("Failed to parse TwiML response: %s", twiml_text[:200])
 
     return messages
