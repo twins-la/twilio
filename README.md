@@ -62,3 +62,7 @@ message = client.messages.create(
 )
 ```
 
+## License
+
+MIT — see [LICENSE](LICENSE).
+
